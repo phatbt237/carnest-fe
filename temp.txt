@@ -1,0 +1,555 @@
+# PROMPT BỔ SUNG FRONTEND — CARNEST (6 PHẦN CÒN THIẾU)
+
+## BỐI CẢNH
+
+Project **CarNest** — marketplace xe mô hình (diecast model cars).
+Frontend Next.js 14+ (App Router) + TypeScript + Tailwind CSS + shadcn/ui đã hoạt động.
+
+**Base URL API:** `https://carnest-be-production.up.railway.app`
+**Swagger:** `https://carnest-be-production.up.railway.app/swagger-ui/index.html#`
+**WebSocket:** `wss://carnest-be-production.up.railway.app/ws`
+
+### FE ĐÃ CÓ SẴN (KHÔNG CHẠM VÀO):
+- Auth (login, register, auth context, axios interceptor refresh token)
+- Shop (tạo, xem, follow, danh sách, tìm kiếm)
+- Product (CRUD, filter, danh sách cursor-based, chi tiết)
+- Category & Brand (CRUD admin, danh sách public)
+- Cart + Checkout + Order (giỏ hàng, đặt hàng, timeline trạng thái)
+- Wallet (nạp tiền, xem số dư, lịch sử giao dịch)
+- Auction (đấu giá, bid, countdown, WebSocket)
+- Price Offer (đề xuất giá, counter)
+
+### CẦN BỔ SUNG 6 PHẦN MỚI:
+1. Review & Rating
+2. Chat Realtime
+3. Notification Realtime
+4. Badge & Showcase
+5. WantList & Trade
+6. Report
+
+## QUY TẮC CODE
+
+- Dùng App Router (`app/` directory)
+- Dùng `"use client"` cho component có state/effect
+- Dùng Server Component cho trang public (SEO)
+- API calls qua axios instance đã có (file `lib/axios.ts` hoặc `lib/api.ts`)
+- Auth token lấy từ auth context/store đã có
+- Pagination cursor-based dùng `useInfiniteQuery` từ TanStack Query
+- UI component dùng shadcn/ui (Button, Card, Dialog, Input, Textarea, Select, Badge, Avatar, Tabs...)
+- Icon dùng lucide-react
+- Toast notification dùng sonner hoặc shadcn toast
+- Responsive mobile-first
+
+## RESPONSE FORMAT TỪ API
+
+Tất cả API trả về:
+```json
+{
+  "status": 200,
+  "message": "Thành công",
+  "data": { ... }
+}
+```
+
+Cursor-based pagination:
+```json
+{
+  "items": [...],
+  "nextCursor": "150_42",
+  "hasMore": true,
+  "size": 20,
+  "totalElements": 500
+}
+```
+
+Auth header: `Authorization: Bearer <accessToken>`
+
+---
+
+## PHẦN 1: WEBSOCKET PROVIDER (LÀM TRƯỚC TIÊN)
+
+Tạo WebSocket provider wrap toàn app. Cần cho Chat + Notification realtime.
+
+### Cài đặt:
+```bash
+npm install @stomp/stompjs sockjs-client
+npm install -D @types/sockjs-client
+```
+
+### Tạo `providers/WebSocketProvider.tsx`:
+```typescript
+"use client"
+// Connect khi user đăng nhập, disconnect khi logout
+// Dùng SockJS + STOMP
+// Connect endpoint: wss://carnest-be-production.up.railway.app/ws
+//
+// Subscribe 2 channel luôn (khi đã login):
+//   /topic/chat/{userId} → nhận tin nhắn mới
+//   /topic/notifications/{userId} → nhận thông báo mới
+//
+// Subscribe auction (chỉ khi ở trang auction detail):
+//   /topic/auction/{auctionId} → nhận bid update
+//
+// Expose qua context:
+//   subscribeAuction(auctionId) / unsubscribeAuction()
+//   onNewMessage callback
+//   onNewNotification callback
+//   isConnected state
+```
+
+### Wrap trong layout (`app/layout.tsx`):
+```tsx
+<AuthProvider>
+  <QueryProvider>
+    <WebSocketProvider>
+      {children}
+    </WebSocketProvider>
+  </QueryProvider>
+</AuthProvider>
+```
+
+---
+
+## PHẦN 2: NOTIFICATION REALTIME
+
+### API
+```
+GET /api/notifications?cursor=&size=20
+→ { items: [{ id, type, title, content, referenceType, referenceId, isRead, createdAt }], nextCursor, hasMore }
+
+GET /api/notifications/unread-count
+→ number (vd: 5)
+
+PUT /api/notifications/read-all
+```
+
+### WebSocket
+```
+Subscribe: /topic/notifications/{userId}
+Event: { id, type, title, content, createdAt }
+```
+
+### Types — tạo `types/notification.ts`:
+```typescript
+export interface Notification {
+  id: number
+  type: string
+  title: string
+  content: string
+  referenceType: string | null
+  referenceId: number | null
+  isRead: boolean
+  createdAt: string
+}
+```
+
+### API functions — tạo `lib/api/notification.ts`:
+```typescript
+export const getNotifications = (cursor?: string, size = 20) => ...
+export const getUnreadCount = () => ...
+export const markAllRead = () => ...
+```
+
+### Components cần tạo:
+
+**`components/notification/NotificationBell.tsx`** — Thêm vào Header hiện tại
+- Icon chuông (Bell từ lucide-react)
+- Badge đỏ hiển thị số unread (lấy từ API + cập nhật từ WebSocket)
+- Click → mở Dropdown/Popover hiển thị 5-8 notification gần nhất
+- Mỗi notification: icon theo type, title, content, thời gian relative (2 phút trước)
+- Notification chưa đọc: background highlight (bg-blue-50)
+- Click notification → navigate đến trang liên quan (order, auction, product...)
+- Link "Xem tất cả" → navigate `/notifications`
+
+**`app/notifications/page.tsx`** — Trang danh sách thông báo
+- Danh sách notification cursor-based (useInfiniteQuery + "Tải thêm" button)
+- Nút "Đánh dấu tất cả đã đọc" ở trên
+- Mỗi notification card: icon, title, content, thời gian, badge chưa đọc
+- Click → navigate theo referenceType:
+  - ORDER → `/orders/{referenceId}`
+  - AUCTION → `/auctions/{referenceId}`
+  - PRODUCT → `/products/{referenceId}`
+  - USER → `/profile/{referenceId}`
+
+**Toast notification** — Khi WebSocket nhận event mới:
+- Hiện toast ở góc phải trên (dùng sonner hoặc shadcn toast)
+- Tự ẩn sau 5 giây
+- Click toast → navigate đến trang liên quan
+
+### Notification Type → Icon mapping:
+```
+ORDER_PLACED → ShoppingBag
+ORDER_SHIPPED → Truck
+ORDER_COMPLETED → CheckCircle
+ORDER_CANCELLED → XCircle
+BID_OUTBID → TrendingUp
+AUCTION_WON → Trophy
+OFFER_RECEIVED → MessageSquare
+OFFER_ACCEPTED → CheckCircle
+NEW_REVIEW → Star
+BADGE_EARNED → Award
+ESCROW_RELEASED → Wallet
+```
+
+---
+
+## PHẦN 3: CHAT REALTIME
+
+### API
+```
+POST /api/chat/send/{receiverId}
+Body: { "content": "Xin chào, sản phẩm này còn không?" }
+→ { conversationId, messageId, senderUsername, content, timestamp }
+
+GET /api/chat/conversations?cursor=&size=20
+→ { items: [{ id, otherUsername, otherAvatar, lastMessage, lastMessageAt, unread }] }
+
+GET /api/chat/conversations/{id}/messages?cursor=&size=20
+→ { items: [{ id, senderUsername, content, type, isRead, createdAt }] }
+
+PUT /api/chat/conversations/{id}/read
+```
+
+### WebSocket
+```
+Subscribe: /topic/chat/{myUserId}
+Event: { conversationId, messageId, senderUsername, content, timestamp }
+```
+
+### Types — tạo `types/chat.ts`:
+```typescript
+export interface Conversation {
+  id: number
+  otherUsername: string
+  otherAvatar: string | null
+  lastMessage: string
+  lastMessageAt: string
+  unread: number
+}
+
+export interface Message {
+  id: number
+  senderUsername: string
+  content: string
+  type: string
+  isRead: boolean
+  createdAt: string
+}
+```
+
+### Trang Chat — `app/chat/page.tsx` (Protected)
+
+Layout Messenger-style:
+```
+┌─────────────────────────────────────────────┐
+│  Chat                                        │
+├──────────────┬──────────────────────────────┤
+│ Conversations│  Messages                     │
+│              │                               │
+│ ● User A  2 │  [User A] Xin chào           │
+│   "Xe còn.."│  [Me] Dạ còn anh             │
+│              │  [User A] Giá bao nhiêu?     │
+│   User B     │                               │
+│   "OK thanks"│                               │
+│              │                               │
+│              ├──────────────────────────────┤
+│              │ [Nhập tin nhắn...    ] [Gửi] │
+└──────────────┴──────────────────────────────┘
+```
+
+**Desktop (>= md):** 2 cột — conversations list trái (w-1/3), messages phải (w-2/3)
+**Mobile (< md):** 1 cột — mặc định hiện conversations list, click vào → hiện messages full screen + nút back
+
+**Conversations List (`components/chat/ConversationList.tsx`):**
+- Danh sách cursor-based
+- Mỗi item: avatar, username, last message preview (truncate), thời gian, badge unread
+- Conversation đang chọn: highlight bg
+- Sắp xếp: mới nhất trên cùng
+- Realtime: khi WebSocket nhận tin mới → cập nhật lastMessage + đẩy conversation lên đầu
+
+**Messages (`components/chat/MessageList.tsx`):**
+- Tin nhắn mình: bên phải, bg xanh (bg-blue-500 text-white)
+- Tin nhắn đối phương: bên trái, bg xám (bg-gray-100)
+- Hiển thị thời gian mỗi nhóm tin (cách nhau > 5 phút)
+- Load more tin cũ khi scroll lên (cursor-based, prepend)
+- Auto scroll xuống khi có tin mới
+- Realtime: WebSocket nhận tin → append vào cuối + scroll
+
+**Input (`components/chat/ChatInput.tsx`):**
+- Textarea auto-resize
+- Gửi bằng Enter (Shift+Enter xuống dòng)
+- Nút gửi (Send icon)
+
+**Nút "Nhắn tin" trên các trang khác:**
+- Trang chi tiết sản phẩm: nút "Nhắn tin cho shop" → gọi `POST /api/chat/send/{sellerId}` với message mặc định → navigate `/chat`
+- Trang shop: nút "Nhắn tin" tương tự
+- Trang want list: nút "Tôi có xe này" → mở chat
+
+---
+
+## PHẦN 4: REVIEW & RATING
+
+### API
+```
+POST /api/reviews
+Body: { orderId, rating (1-5), comment, ratingAccuracy (1-5), ratingShipping (1-5), ratingCommunication (1-5), imageUrls: [] }
+
+PUT /api/reviews/{id}/reply
+Body: { reply: "Cảm ơn bạn đã đánh giá!" }
+
+GET /api/reviews/shop/{shopId}?cursor=&size=20
+→ { items: [{ id, orderId, type, rating, comment, ratingAccuracy, ratingShipping, ratingCommunication, reply, repliedAt, reviewerUsername, reviewerAvatar, reviewedUsername, imageUrls, createdAt }] }
+```
+
+### Types — `types/review.ts`:
+```typescript
+export interface Review {
+  id: number
+  orderId: number
+  type: string
+  rating: number
+  comment: string | null
+  ratingAccuracy: number | null
+  ratingShipping: number | null
+  ratingCommunication: number | null
+  reply: string | null
+  repliedAt: string | null
+  reviewerUsername: string
+  reviewerAvatar: string | null
+  reviewedUsername: string
+  imageUrls: string[]
+  createdAt: string
+}
+```
+
+### Components:
+
+**`components/review/ReviewForm.tsx`** — Hiển thị trong trang `/orders/[id]` khi order status = COMPLETED
+- 5 sao tổng thể (bắt buộc) — click để chọn, filled star = vàng, empty = xám
+- 3 tiêu chí phụ (optional): "Mô tả đúng thực tế", "Đóng gói & vận chuyển", "Giao tiếp" — mỗi cái 5 sao nhỏ
+- Textarea comment
+- Input URLs ảnh (mỗi dòng 1 URL, hoặc nút "Thêm ảnh" → input)
+- Nút "Gửi đánh giá"
+- Sau khi gửi: hiển thị review đã gửi, ẩn form
+
+**`components/review/ReviewList.tsx`** — Hiển thị trong trang shop `/shops/[slug]`
+- Rating summary ở đầu:
+  ```
+  ★ 4.8 / 5.0  (124 đánh giá)
+  5★ ████████████████ 80%
+  4★ ████████ 15%
+  3★ ██ 3%
+  2★ █ 1%
+  1★ █ 1%
+  ```
+- Danh sách review cursor-based (load more)
+- Mỗi review card:
+  - Avatar + username + số sao + thời gian
+  - Comment
+  - Ảnh (thumbnail grid, click zoom)
+  - Sub-ratings (nếu có): Accuracy ★4, Shipping ★5, Communication ★5
+  - Reply từ seller (nếu có): indented, khác style
+
+**`components/review/StarRating.tsx`** — Component dùng chung
+- Props: value, onChange, readonly, size
+- Filled star: text-yellow-400, Empty star: text-gray-300
+- Hover effect khi không readonly
+
+**`components/review/ReplyForm.tsx`** — Trong dashboard seller
+- Hiển thị khi seller xem review về shop mình (chưa có reply)
+- Textarea + nút "Phản hồi"
+
+---
+
+## PHẦN 5: BADGE & SHOWCASE
+
+### Badge API
+```
+GET /api/badges → [{ id, name, description, iconUrl, tier, criteriaType, criteriaValue }]
+GET /api/badges/user/{userId} → [{ id, name, description, iconUrl, tier, isFeatured, earnedAt }]
+GET /api/badges/my → same as above
+```
+
+### Showcase API
+```
+POST /api/showcases — Body: { name, description, coverImageUrl, isPublic }
+POST /api/showcases/{id}/items — Body: { name, brand, scale, imageUrl, description, purchasePrice }
+POST /api/showcases/{id}/like — toggle like/unlike
+GET /api/showcases/user/{userId} → [{ id, name, coverImageUrl, itemCount, likeCount, isLiked, ownerUsername }]
+GET /api/showcases/{id} → { ...above, items: [{ id, name, brand, scale, imageUrl }] }
+```
+
+### Types:
+```typescript
+// types/badge.ts
+export interface Badge {
+  id: number; name: string; description: string; iconUrl: string | null
+  tier: 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' | 'DIAMOND'
+  criteriaType: string; criteriaValue: number
+}
+export interface UserBadge extends Badge {
+  isFeatured: boolean; earnedAt: string
+}
+
+// types/showcase.ts
+export interface Showcase {
+  id: number; name: string; description: string | null; coverImageUrl: string | null
+  itemCount: number; likeCount: number; viewCount: number
+  isPublic: boolean; isLiked: boolean; ownerUsername: string
+  items?: ShowcaseItem[]; createdAt: string
+}
+export interface ShowcaseItem {
+  id: number; name: string; brand: string | null; scale: string | null
+  imageUrl: string | null; description: string | null; purchasePrice: number | null
+}
+```
+
+### Pages:
+
+**`components/badge/BadgeGrid.tsx`** — Grid hiển thị badges
+- Mỗi badge: icon (hoặc emoji fallback), tên, tier color border
+- Tier colors: BRONZE (#CD7F32), SILVER (#C0C0C0), GOLD (#FFD700), PLATINUM (#E5E4E2), DIAMOND (#B9F2FF)
+- Hover/click → tooltip/dialog xem description + criteria + earnedAt
+- Badge chưa đạt (nếu hiện tất cả): grayscale + opacity-50
+
+**`app/profile/page.tsx`** hoặc **`app/users/[username]/page.tsx`** — Trang profile
+- Avatar + username + stats (totalBought, totalSold, rating)
+- Tabs: Badges | Showcases | Reviews
+- Tab Badges → BadgeGrid
+- Tab Showcases → danh sách showcase cards
+- Tab Reviews → ReviewList
+
+**`app/showcases/[id]/page.tsx`** — Chi tiết tủ trưng bày (Public, SSR)
+- Cover image lớn trên cùng
+- Tên tủ + description + owner info
+- Nút Like (Heart icon + count), toggle
+- Grid xe mô hình: ảnh lớn + tên + brand + scale
+- Click ảnh → lightbox zoom
+
+**`app/my/showcases/page.tsx`** — Quản lý tủ trưng bày (Protected)
+- Danh sách showcase của tôi
+- Nút "Tạo tủ mới" → Dialog form (tên, mô tả, cover image URL, public/private)
+- Click vào showcase → danh sách items + nút "Thêm xe"
+- "Thêm xe" → Dialog form (tên xe, brand, scale, ảnh URL, mô tả, giá mua)
+
+---
+
+## PHẦN 6: WANT LIST & TRADE
+
+### WantList API
+```
+POST /api/wantlist — Body: { title, description, scale, carBrand, carModel, maxPrice, isPublic }
+PUT /api/wantlist/{id} — cập nhật
+PUT /api/wantlist/{id}/cancel — hủy
+GET /api/wantlist/my?cursor=&size=20 → cursor-based
+GET /api/wantlist/public?cursor=&size=20 → cursor-based
+Response item: { id, title, description, scale, carBrand, carModel, maxPrice, status, isPublic, username, createdAt }
+```
+
+### Trade API
+```
+POST /api/trades — Body: { targetProductId, offerProductIds: [1,2,3], cashOffset: 50000, message: "..." }
+PUT /api/trades/{id}/accept
+PUT /api/trades/{id}/reject
+PUT /api/trades/{id}/cancel
+GET /api/trades/my → [{ id, status, offererUsername, receiverUsername, targetProductId, targetProductName, cashOffset, message, offerProducts: [{id,name}], expiresAt, createdAt }]
+GET /api/trades/received → same format
+```
+
+### Pages:
+
+**`app/wantlist/page.tsx`** — Danh sách yêu cầu tìm xe công khai (Public, SSR)
+- Mỗi card: tiêu đề, mô tả (truncate), scale | brand | model, ngân sách tối đa, username, thời gian
+- Nút "Tôi có xe này" → mở chat với người tìm
+- Cursor-based pagination
+
+**`app/my/wantlist/page.tsx`** — Quản lý yêu cầu tìm xe (Protected)
+- Danh sách yêu cầu của tôi + status badge (ACTIVE = xanh, FOUND = vàng, CANCELLED = xám)
+- Nút "Tạo yêu cầu mới" → Dialog form (title, description, scale, carBrand, carModel, maxPrice, isPublic)
+- Nút "Hủy" cho mỗi yêu cầu ACTIVE
+
+**Nút "Đề xuất đổi xe"** — Thêm vào trang chi tiết sản phẩm (nếu sản phẩm không phải của mình)
+- Click → Dialog/Modal:
+  - Hiển thị sản phẩm target (ảnh + tên + giá)
+  - "Chọn xe đưa ra đổi" → hiển thị danh sách sản phẩm shop mình (checkbox multi-select)
+  - Input "Tiền bù" (nếu giá trị không bằng nhau)
+  - Textarea "Lời nhắn"
+  - Nút "Gửi đề xuất"
+
+**`app/my/trades/page.tsx`** — Quản lý đổi xe (Protected)
+- Tabs: "Đã gửi" | "Đã nhận"
+- Mỗi trade card:
+  - "Xe muốn đổi": tên + ảnh target product
+  - "Xe đưa ra": danh sách tên offer products
+  - "Tiền bù": ± amount
+  - Status badge: PENDING (vàng), ACCEPTED (xanh), REJECTED (đỏ), EXPIRED (xám)
+  - Nút action (nếu PENDING):
+    - Tab "Đã nhận": nút Accept + Reject
+    - Tab "Đã gửi": nút Hủy
+
+---
+
+## PHẦN 7: REPORT
+
+### API
+```
+POST /api/reports
+Body: { targetType: "PRODUCT", targetId: 123, reason: "FAKE_PRODUCT", description: "Ảnh không đúng thực tế" }
+
+GET /api/reports/admin?status=PENDING (Admin)
+PUT /api/reports/admin/{id}/resolve (Admin) — Body: { resolution: "Đã xóa sản phẩm vi phạm" }
+```
+
+### Report reasons:
+```
+FAKE_PRODUCT — Sản phẩm giả/không đúng mô tả
+SCAM — Lừa đảo
+INAPPROPRIATE — Nội dung không phù hợp
+SPAM — Spam
+HARASSMENT — Quấy rối
+COPYRIGHT — Vi phạm bản quyền
+WRONG_CATEGORY — Sai danh mục
+PRICE_GOUGING — Giá không hợp lý
+OTHER — Khác
+```
+
+### Components:
+
+**`components/report/ReportModal.tsx`** — Component dùng chung
+- Props: targetType, targetId, trigger (ReactNode)
+- Dialog: chọn lý do (Select dropdown) + mô tả chi tiết (Textarea) + nút Gửi
+- Gọi `POST /api/reports`
+- Thành công → toast "Báo cáo đã được ghi nhận"
+
+**Thêm nút Report vào:**
+- Trang chi tiết sản phẩm: icon Flag nhỏ góc phải → ReportModal targetType="PRODUCT"
+- Trang shop: icon Flag → ReportModal targetType="USER" (shop owner)
+- Chat message: icon nhỏ → ReportModal targetType="MESSAGE"
+
+**`app/admin/reports/page.tsx`** — Quản lý report (Admin only)
+- Danh sách report, filter theo status (PENDING, RESOLVED, DISMISSED)
+- Mỗi row: targetType, reason, description ngắn, reporter, ngày
+- Click → Dialog chi tiết + link đến đối tượng bị report
+- Nút "Xử lý" → input resolution → gọi API resolve
+
+---
+
+## THỨ TỰ IMPLEMENT
+
+```
+1. WebSocket Provider (cần cho 2, 3)
+   ↓
+2. Notification (header bell + page + toast)
+   ↓
+3. Chat (page + realtime + nút nhắn tin trên product/shop)
+   ↓
+4. Review (form trong order detail + list trong shop)
+   ↓
+5. Badge + Showcase (profile page + showcase pages)
+   ↓
+6. WantList + Trade (pages + nút đổi xe trên product)
+   ↓
+7. Report (modal component + admin page)
+```
+
+Mỗi phần: tạo types → API functions → components → pages → tích hợp vào layout/trang hiện tại.

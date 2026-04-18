@@ -1,0 +1,278 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { Suspense } from "react";
+import Image from "next/image";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { cartApi } from "@/lib/api/cart";
+import { ordersApi } from "@/lib/api/orders";
+import { cn, formatCurrency, getErrorMessage } from "@/lib/utils";
+import type { PaymentMethod } from "@/types";
+import { CreditCard, Truck, Smartphone, Building2, Wallet, AlertCircle, CheckCircle2 } from "lucide-react";
+
+const schema = z.object({
+  shippingName: z.string().min(2, "Vui lòng nhập họ tên"),
+  shippingPhone: z
+    .string()
+    .regex(/^(0|\+84)[0-9]{8,9}$/, "SĐT không hợp lệ"),
+  shippingAddress: z.string().min(10, "Vui lòng nhập địa chỉ đầy đủ"),
+  paymentMethod: z.enum(["VNPAY", "MOMO", "COD", "BANK_TRANSFER", "WALLET"]),
+  buyerNote: z.string().optional(),
+});
+
+type FormData = z.infer<typeof schema>;
+
+const PAYMENT_METHODS: {
+  value: PaymentMethod;
+  label: string;
+  icon: React.FC<{ className?: string }>;
+  desc: string;
+}[] = [
+  { value: "WALLET", label: "Ví CarNest", icon: Wallet, desc: "Thanh toán từ ví nội bộ" },
+  { value: "VNPAY", label: "VNPAY", icon: CreditCard, desc: "Thanh toán qua VNPAY" },
+  { value: "MOMO", label: "MoMo", icon: Smartphone, desc: "Ví điện tử MoMo" },
+  { value: "BANK_TRANSFER", label: "Chuyển khoản", icon: Building2, desc: "Chuyển khoản ngân hàng" },
+  { value: "COD", label: "Tiền mặt (COD)", icon: Truck, desc: "Thanh toán khi nhận hàng" },
+];
+
+function CheckoutContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const productIds = searchParams
+    .get("products")
+    ?.split(",")
+    .map(Number)
+    .filter(Boolean) ?? [];
+
+  const {
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    formState: { errors },
+  } = useForm<FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: { paymentMethod: "WALLET" },
+  });
+
+  const paymentMethod = watch("paymentMethod");
+
+  const { data: cart } = useQuery({
+    queryKey: ["cart"],
+    queryFn: cartApi.get,
+  });
+
+  const { data: wallet } = useQuery({
+    queryKey: ["wallet"],
+    queryFn: ordersApi.getWallet,
+  });
+
+  const selectedItems =
+    cart?.items.filter((i) => productIds.includes(i.productId)) ?? [];
+  const total = selectedItems.reduce((s, i) => s + (i.price ?? 0) * (i.quantity ?? 0), 0);
+  const walletBalance = wallet?.balance ?? 0;
+  const isWalletPayment = paymentMethod === "WALLET";
+  const hasEnoughBalance = walletBalance >= total;
+
+  const checkoutMutation = useMutation({
+    mutationFn: (data: FormData) =>
+      ordersApi.checkout({
+        ...data,
+        productIds,
+      }),
+    onSuccess: (orders) => {
+      queryClient.invalidateQueries({ queryKey: ["cart"] });
+      toast.success(`Đặt hàng thành công! ${orders.length} đơn hàng được tạo`);
+      router.push("/orders");
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  return (
+    <div className="container mx-auto px-4 py-6">
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">Đặt hàng</h1>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <form
+          onSubmit={handleSubmit((d) => checkoutMutation.mutate(d))}
+          className="lg:col-span-2 space-y-6"
+        >
+          {/* Shipping */}
+          <div className="rounded-xl border bg-white p-5 space-y-4">
+            <h2 className="font-semibold text-gray-900">Địa chỉ giao hàng</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <Label>Họ và tên</Label>
+                <Input {...register("shippingName")} className="mt-1" placeholder="Nguyễn Văn A" />
+                {errors.shippingName && (
+                  <p className="text-xs text-red-500 mt-1">{errors.shippingName.message}</p>
+                )}
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <Label>Số điện thoại</Label>
+                <Input {...register("shippingPhone")} className="mt-1" placeholder="0912345678" />
+                {errors.shippingPhone && (
+                  <p className="text-xs text-red-500 mt-1">{errors.shippingPhone.message}</p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <Label>Địa chỉ</Label>
+                <Input
+                  {...register("shippingAddress")}
+                  className="mt-1"
+                  placeholder="Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành"
+                />
+                {errors.shippingAddress && (
+                  <p className="text-xs text-red-500 mt-1">{errors.shippingAddress.message}</p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <Label>Ghi chú (tùy chọn)</Label>
+                <Input
+                  {...register("buyerNote")}
+                  className="mt-1"
+                  placeholder="Ghi chú thêm cho người bán..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Payment */}
+          <div className="rounded-xl border bg-white p-5 space-y-4">
+            <h2 className="font-semibold text-gray-900">Phương thức thanh toán</h2>
+            <div className="space-y-2">
+              {PAYMENT_METHODS.map((pm) => (
+                <label
+                  key={pm.value}
+                  className={cn(
+                    "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                    paymentMethod === pm.value
+                      ? "border-carnest-blue bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    value={pm.value}
+                    {...register("paymentMethod")}
+                    className="text-carnest-blue"
+                  />
+                  <pm.icon className="h-5 w-5 text-carnest-blue shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">{pm.label}</p>
+                    <p className="text-xs text-gray-500">{pm.desc}</p>
+                  </div>
+                  {pm.value === "WALLET" && (
+                    <span className={cn(
+                      "text-xs font-semibold px-2 py-0.5 rounded-full",
+                      hasEnoughBalance
+                        ? "bg-green-100 text-green-700"
+                        : "bg-red-100 text-red-600"
+                    )}>
+                      {formatCurrency(walletBalance)}
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+
+            {isWalletPayment && !hasEnoughBalance && (
+              <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>
+                  Số dư ví không đủ. Cần thêm{" "}
+                  <strong>{formatCurrency(total - walletBalance)}</strong> để thanh toán.
+                </span>
+              </div>
+            )}
+
+            {isWalletPayment && hasEnoughBalance && total > 0 && (
+              <div className="flex items-start gap-2 text-sm text-green-600 bg-green-50 rounded-lg px-3 py-2">
+                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>
+                  Số dư ví đủ để thanh toán. Còn lại sau khi thanh toán:{" "}
+                  <strong>{formatCurrency(walletBalance - total)}</strong>
+                </span>
+              </div>
+            )}
+          </div>
+
+          <Button
+            type="submit"
+            size="xl"
+            className="w-full bg-carnest-orange hover:bg-carnest-orange-dark text-white"
+            disabled={checkoutMutation.isPending || selectedItems.length === 0 || (isWalletPayment && !hasEnoughBalance)}
+          >
+            {checkoutMutation.isPending ? "Đang đặt hàng..." : `Đặt hàng · ${formatCurrency(total)}`}
+          </Button>
+        </form>
+
+        {/* Summary */}
+        <div className="rounded-xl border bg-white p-5 h-fit sticky top-20 space-y-4">
+          <h2 className="font-semibold text-gray-900">Sản phẩm đặt hàng</h2>
+          <div className="space-y-3 max-h-64 overflow-y-auto">
+            {selectedItems.map((item) => (
+              <div key={item.id} className="flex gap-2">
+                <div className="relative h-12 w-12 rounded-md overflow-hidden bg-gray-100 shrink-0">
+                  {item.productImage ? (
+                    <Image
+                      src={item.productImage}
+                      alt={item.productName}
+                      fill
+                      className="object-cover"
+                      sizes="48px"
+                    />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-gray-300 text-xs">?</div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-900 line-clamp-2">
+                    {item.productName}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatCurrency(item.price)} x{item.quantity}
+                  </p>
+                </div>
+                <p className="text-xs font-semibold text-carnest-orange shrink-0">
+                  {formatCurrency(item.price * item.quantity)}
+                </p>
+              </div>
+            ))}
+          </div>
+          <Separator />
+          <div className="space-y-2">
+            <div className="flex justify-between font-bold text-base">
+              <span>Tổng tiền hàng</span>
+              <span className="text-carnest-orange">{formatCurrency(total)}</span>
+            </div>
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>Số dư ví của bạn</span>
+              <span className={cn("font-medium", hasEnoughBalance ? "text-green-600" : "text-red-500")}>
+                {formatCurrency(walletBalance)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={<div className="container mx-auto px-4 py-8 text-center">Đang tải...</div>}>
+      <CheckoutContent />
+    </Suspense>
+  );
+}
