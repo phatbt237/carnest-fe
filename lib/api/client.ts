@@ -29,6 +29,7 @@ export const tokenStore = {
       localStorage.removeItem("carnest_access_token");
       localStorage.removeItem("carnest_refresh_token");
       localStorage.removeItem("carnest_user");
+      localStorage.removeItem("carnest_verified_at");
     }
   },
 };
@@ -73,7 +74,12 @@ apiClient.interceptors.response.use(
       _retry?: boolean;
     };
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    const isAuthEndpoint =
+      originalRequest.url?.includes("/api/auth/login") ||
+      originalRequest.url?.includes("/api/auth/register") ||
+      originalRequest.url?.includes("/api/auth/refresh");
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });

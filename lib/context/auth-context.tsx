@@ -37,6 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const me = await authApi.me();
       setUser(me);
       localStorage.setItem("carnest_user", JSON.stringify(me));
+      localStorage.setItem("carnest_verified_at", String(Date.now()));
     } catch {
       tokenStore.clear();
       setUser(null);
@@ -46,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Try cached user first for instant render
+    // Show cached user instantly (no loading flash)
     const cached = localStorage.getItem("carnest_user");
     if (cached) {
       try {
@@ -55,7 +56,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ignore
       }
     }
-    loadUser();
+    // Only call /api/auth/me if not verified within the last 5 minutes
+    const lastVerified = Number(localStorage.getItem("carnest_verified_at") || 0);
+    const needsVerify = !lastVerified || Date.now() - lastVerified > 5 * 60 * 1000;
+    if (needsVerify) {
+      loadUser();
+    } else {
+      setIsLoading(false);
+    }
   }, [loadUser]);
 
   const login = useCallback(async (data: LoginRequest) => {

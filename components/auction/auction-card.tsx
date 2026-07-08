@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { CountdownTimer } from "./countdown-timer";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatCompact } from "@/lib/utils";
 import type { Auction } from "@/types";
 import { Users, Gavel } from "lucide-react";
 
@@ -20,7 +20,12 @@ interface AuctionCardProps {
 }
 
 export function AuctionCard({ auction }: AuctionCardProps) {
-  const image = auction.product?.imageUrls?.[0] || "/placeholder-car.jpg";
+  const p = auction.product;
+  const image =
+    p?.primaryImage ||
+    p?.images?.[0]?.imageUrl ||
+    p?.imageUrls?.[0] ||
+    "/placeholder-car.jpg";
   const badge = STATUS_BADGES[auction.status] || STATUS_BADGES.ENDED;
 
   return (
@@ -32,6 +37,7 @@ export function AuctionCard({ auction }: AuctionCardProps) {
             src={image}
             alt={auction.product?.name}
             fill
+            loading="lazy"
             className="object-cover group-hover:scale-105 transition-transform duration-300"
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
           />
@@ -79,7 +85,7 @@ export function AuctionCard({ auction }: AuctionCardProps) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1 text-xs text-gray-500">
               <Users className="h-3 w-3" />
-              <span>{auction.totalBids ?? auction.bidCount} lượt đặt</span>
+              <span>{formatCompact(auction.totalBids ?? auction.bidCount)} lượt đặt</span>
             </div>
             {auction.recentBids && auction.recentBids.length > 0 && (
               <div className="flex -space-x-1.5">

@@ -3,15 +3,20 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { shopsApi } from "@/lib/api/shops";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Star, Users, Store, BadgeCheck } from "lucide-react";
+import { ShopFollowButton } from "@/components/shop/shop-follow-button";
+import { Search, Star, Users, Store, BadgeCheck, Loader2 } from "lucide-react";
+import { formatCompact } from "@/lib/utils";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
+import type { CursorPage, Shop } from "@/types";
 
 export default function ShopsPage() {
+  const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<"follower" | "rating" | "newest">("rating");
@@ -39,9 +44,39 @@ export default function ShopsPage() {
   const activeQuery = isSearching ? searchQuery : listQuery;
   const shops = activeQuery.data?.pages.flatMap((p) => p.items) ?? [];
 
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!activeQuery.hasNextPage,
+    isLoading: activeQuery.isFetchingNextPage,
+    onLoadMore: activeQuery.fetchNextPage,
+  });
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setSearchTerm(keyword.trim());
+  };
+
+  const handleFollowChange = (shopId: number, isFollowing: boolean) => {
+    queryClient.setQueriesData<InfiniteData<CursorPage<Shop>>>(
+      { queryKey: ["shops"] },
+      (old) =>
+        old
+          ? {
+              ...old,
+              pages: old.pages.map((page) => ({
+                ...page,
+                items: page.items.map((s) =>
+                  s.id === shopId
+                    ? {
+                        ...s,
+                        isFollowing,
+                        followerCount: isFollowing ? s.followerCount + 1 : s.followerCount - 1,
+                      }
+                    : s
+                ),
+              })),
+            }
+          : old
+    );
   };
 
   return (
@@ -100,23 +135,33 @@ export default function ShopsPage() {
               <Link
                 key={shop.id}
                 href={`/shops/${shop.slug}`}
-                className="group flex flex-col items-center gap-3 p-4 rounded-xl border bg-white hover:shadow-md hover:border-carnest-blue transition-all text-center"
+                className="group relative flex flex-col items-center gap-3 p-4 rounded-xl border bg-white hover:shadow-md hover:border-carnest-blue transition-all text-center"
               >
-                <div className="h-16 w-16 rounded-full overflow-hidden bg-gray-100 relative">
-                  {shop.logoUrl ? (
-                    <Image src={shop.logoUrl} alt={shop.shopName} fill className="object-cover" sizes="64px" />
-                  ) : (
-                    <div className="h-full w-full flex items-center justify-center text-2xl font-bold text-carnest-blue">
-                      {shop.shopName.charAt(0)}
+                <ShopFollowButton
+                  shopId={shop.id}
+                  initialIsFollowing={shop.isFollowing}
+                  onChange={(next) => handleFollowChange(shop.id, next)}
+                  className="absolute top-2 right-2"
+                />
+                <div className="relative">
+                  <div className="h-16 w-16 rounded-full overflow-hidden bg-gray-100">
+                    {shop.logoUrl ? (
+                      <Image src={shop.logoUrl} alt={shop.shopName} fill className="object-cover" sizes="64px" />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-2xl font-bold text-carnest-blue">
+                        {shop.shopName.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                  {shop.isVerified && (
+                    <div className="absolute -top-1 -right-1 h-5 w-5 bg-emerald-500 rounded-full flex items-center justify-center ring-2 ring-white shadow-sm">
+                      <BadgeCheck className="h-3 w-3 text-white" />
                     </div>
                   )}
                 </div>
                 <div className="w-full">
-                  <p className="font-semibold text-sm text-gray-900 truncate group-hover:text-carnest-blue transition-colors flex items-center justify-center gap-1">
-                    <span className="truncate">{shop.shopName}</span>
-                    {shop.isVerified && (
-                      <BadgeCheck className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                    )}
+                  <p className="font-semibold text-sm text-gray-900 truncate group-hover:text-carnest-blue transition-colors">
+                    {shop.shopName}
                   </p>
                   <div className="flex items-center justify-center gap-2 mt-1 text-xs text-gray-500">
                     <span className="flex items-center gap-0.5">
@@ -125,7 +170,7 @@ export default function ShopsPage() {
                     </span>
                     <span className="flex items-center gap-0.5">
                       <Users className="h-3 w-3" />
-                      {shop.followerCount}
+                      {formatCompact(shop.followerCount)}
                     </span>
                   </div>
                 </div>
@@ -133,14 +178,10 @@ export default function ShopsPage() {
             ))}
           </div>
           {activeQuery.hasNextPage && (
-            <div className="text-center mt-8">
-              <Button
-                variant="outline"
-                onClick={() => activeQuery.fetchNextPage()}
-                disabled={activeQuery.isFetchingNextPage}
-              >
-                {activeQuery.isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-              </Button>
+            <div ref={sentinelRef} className="flex justify-center py-8">
+              {activeQuery.isFetchingNextPage && (
+                <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              )}
             </div>
           )}
         </>

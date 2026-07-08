@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { auctionsApi } from "@/lib/api/auctions";
 import { AuctionCard } from "@/components/auction/auction-card";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Gavel } from "lucide-react";
+import { Gavel, Loader2 } from "lucide-react";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 
 type Filter = "active" | "ending_soon" | "upcoming" | "ended";
 
@@ -34,6 +34,12 @@ export default function AuctionsPage() {
     });
 
   const auctions = data?.pages.flatMap((p) => p.items) ?? [];
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -86,14 +92,10 @@ export default function AuctionsPage() {
             ))}
           </div>
           {hasNextPage && (
-            <div className="text-center mt-8">
-              <Button
-                variant="outline"
-                onClick={() => fetchNextPage()}
-                disabled={isFetchingNextPage}
-              >
-                {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-              </Button>
+            <div ref={sentinelRef} className="flex justify-center py-8">
+              {isFetchingNextPage && (
+                <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              )}
             </div>
           )}
         </>

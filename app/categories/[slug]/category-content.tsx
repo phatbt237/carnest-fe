@@ -5,9 +5,9 @@ import { categoriesApi } from "@/lib/api/categories";
 import { productsApi } from "@/lib/api/products";
 import { ProductCard } from "@/components/product/product-card";
 import { ProductCardSkeleton } from "@/components/product/product-card-skeleton";
-import { Button } from "@/components/ui/button";
-import { Package, ChevronRight } from "lucide-react";
+import { Package, ChevronRight, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 
 interface Props {
   slug: string;
@@ -38,6 +38,12 @@ export function CategoryContent({ slug }: Props) {
 
   const products = data?.pages.flatMap((p) => p.items) ?? [];
 
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
+
   return (
     <div className="container mx-auto px-4 py-6">
       {/* Breadcrumb */}
@@ -66,10 +72,10 @@ export function CategoryContent({ slug }: Props) {
             {products.map((p) => <ProductCard key={p.id} product={p} />)}
           </div>
           {hasNextPage && (
-            <div className="text-center mt-8">
-              <Button variant="outline" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
-                {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-              </Button>
+            <div ref={sentinelRef} className="flex justify-center py-8">
+              {isFetchingNextPage && (
+                <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              )}
             </div>
           )}
         </>

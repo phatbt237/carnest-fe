@@ -10,7 +10,7 @@ export interface CursorPage<T> {
   nextCursor: string | null;
   hasMore: boolean;
   size: number;
-  totalElements: number;
+  totalElements: number | null;
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -63,8 +63,9 @@ export interface Shop {
   rating: number;
   reviewCount: number;
   isFollowing: boolean;
+  isOwner: boolean;
   isVerified?: boolean;
-  owner: {
+  owner?: {
     id: number;
     username: string;
     fullName: string;
@@ -114,7 +115,7 @@ export type Condition =
   | "CUSTOM";
 
 export const CONDITION_LABELS: Record<Condition, string> = {
-  SEALED: "Nguyên hộp niêm phong",
+  SEALED: "Nguyên seal",
   OPENED: "Đã mở hộp",
   LOOSE: "Không hộp",
   DAMAGED_BOX: "Hộp bị lỗi",
@@ -148,7 +149,11 @@ export interface Product {
   minOfferPrice: number | null;
   bulkDiscountMin: number | null;
   bulkDiscountPct: number | null;
-  imageUrls: string[];
+  imageUrls: string[] | null;
+  /** Detail endpoint returns images as objects */
+  images?: { id: number; imageUrl: string; thumbnailUrl: string | null; isPrimary: boolean }[];
+  /** Listing endpoint returns flat primary image */
+  primaryImage?: string | null;
   /** Flat fields some list endpoints return instead of the nested shop object */
   shopId?: number;
   shopName?: string;
@@ -156,7 +161,10 @@ export interface Product {
   metaTitle: string | null;
   metaDescription: string | null;
   shop: Shop;
+  ratingAvg: number | null;
+  followerCount: number;
   isActive: boolean;
+  isVerified?: boolean;
   viewCount: number;
   createdAt: string;
   updatedAt: string;
@@ -248,6 +256,10 @@ export type PaymentMethod =
   | "BANK_TRANSFER"
   | "WALLET";
 
+export type PaymentStatus = "PAID" | "UNPAID" | "PENDING" | "FAILED" | "REFUNDED";
+
+export type EscrowStatus = "NONE" | "HOLDING" | "RELEASED" | "REFUNDED";
+
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   PENDING_PAYMENT: "Chờ thanh toán",
   PENDING: "Chờ xác nhận",
@@ -261,32 +273,51 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 };
 
 export interface OrderItem {
-  product: Product;
-  quantity: number;
+  id: number;
+  productId: number;
+  productName: string;
+  productImage: string | null;
   price: number;
-  subtotal: number;
+  quantity: number;
 }
 
 export interface Order {
   id: number;
   orderCode: string;
-  buyer: User;
-  shop: Shop;
-  items: OrderItem[];
+  status: OrderStatus;
+  paymentMethod: PaymentMethod | null;
+  paymentStatus: PaymentStatus | null;
+  escrowStatus: EscrowStatus | null;
+  subtotal: number;
+  shippingFee: number;
+  discountAmount: number;
+  totalQuantity: number;
+  totalAmount: number;
   shippingName: string;
   shippingPhone: string;
   shippingAddress: string;
-  paymentMethod: PaymentMethod;
-  buyerNote: string;
-  status: OrderStatus;
-  totalPrice: number;
-  totalAmount?: number;
-  trackingNumber: string | null;
   shippingMethod: string | null;
+  trackingNumber: string | null;
+  buyerNote: string | null;
+  sellerNote: string | null;
   cancelReason: string | null;
-  paymentExpiredAt: string | null;
+  paymentDeadline?: string | null;
+  paymentExpiredAt?: string | null;
+  items: OrderItem[];
+  shop: {
+    id: number;
+    shopName: string;
+    slug: string;
+    owner?: { id: number };
+  };
+  buyer: {
+    id: number;
+    username: string;
+    fullName: string;
+    avatarUrl?: string | null;
+  };
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
 }
 
 export interface CheckoutRequest {
@@ -308,11 +339,11 @@ export type AuctionStatus =
 
 export interface AuctionBid {
   id: number;
-  bidderId: number;
+  bidderId?: number;
   bidderUsername: string;
   bidderAvatar?: string | null;
-  amount: number;
-  isAutoBid: boolean;
+  bidAmount: number;
+  isWinning: boolean;
   createdAt: string;
 }
 
@@ -352,6 +383,24 @@ export interface CreateAuctionRequest {
   endTime: string;
   autoExtendMinutes?: number;
   snipeThresholdMin?: number;
+}
+
+export interface MyAuction {
+  id: number;
+  status: AuctionStatus;
+  productName: string;
+  productImage: string | null;
+  productId: number;
+  startingPrice: number;
+  currentPrice: number;
+  reservePrice: number | null;
+  reserveMet: boolean;
+  totalBids: number;
+  startTime: string;
+  endTime: string;
+  extendedCount: number;
+  winnerUsername: string | null;
+  createdAt: string;
 }
 
 export interface AuctionBidEvent {
@@ -461,6 +510,8 @@ export interface Conversation {
   unread: number;
 }
 
+export type ChatTagType = "PRODUCT" | "ORDER" | "WANT_LIST";
+
 export interface Message {
   id: number;
   senderUsername: string;
@@ -468,6 +519,10 @@ export interface Message {
   type: string;
   isRead: boolean;
   createdAt: string;
+  imageUrls?: string[];
+  tagType?: ChatTagType;
+  tagId?: number;
+  tagTitle?: string;
 }
 
 export interface SendMessageResponse {
@@ -475,7 +530,12 @@ export interface SendMessageResponse {
   messageId: number;
   senderUsername: string;
   content: string;
+  type?: string;
   timestamp: string;
+  imageUrls?: string[];
+  tagType?: ChatTagType;
+  tagId?: number;
+  tagTitle?: string;
 }
 
 export interface ChatMessageEvent {
@@ -483,7 +543,9 @@ export interface ChatMessageEvent {
   messageId: number;
   senderUsername: string;
   content: string;
+  type?: string;
   timestamp: string;
+  imageUrls?: string[];
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────
@@ -586,8 +648,11 @@ export interface WantList {
   maxPrice: number | null;
   status: WantListStatus;
   isPublic: boolean;
+  userId?: number;
   username: string;
   createdAt: string;
+  imageUrl: string | null;
+  contactCount: number;
 }
 
 export interface CreateWantListRequest {
@@ -598,6 +663,7 @@ export interface CreateWantListRequest {
   carModel?: string;
   maxPrice?: number;
   isPublic: boolean;
+  imageUrl?: string;
 }
 
 // ─── Trade ────────────────────────────────────────────────────────────────────
@@ -660,4 +726,26 @@ export interface CreateReportRequest {
   targetId: number;
   reason: ReportReason;
   description: string;
+}
+
+// ─── Address ──────────────────────────────────────────────────────────────────
+export interface Address {
+  id: number;
+  receiverName: string;
+  phone: string;
+  province: string;
+  district: string;
+  ward: string;
+  streetAddress: string;
+  isDefault: boolean;
+}
+
+export interface CreateAddressRequest {
+  receiverName: string;
+  phone: string;
+  province: string;
+  district: string;
+  ward: string;
+  streetAddress: string;
+  isDefault: boolean;
 }

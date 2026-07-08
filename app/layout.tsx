@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import { Inter, Poppins } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/layout/header";
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { ScrollToTop } from "@/components/layout/scroll-to-top";
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -49,11 +52,15 @@ export default function RootLayout({
     <html lang="vi" suppressHydrationWarning>
       <body className={`${inter.variable} ${poppins.variable} font-sans`}>
         <Providers>
+          <Suspense fallback={null}>
+            <NavigationProgress />
+          </Suspense>
           <div className="min-h-screen flex flex-col">
             <Header />
             <main className="flex-1 pb-16 md:pb-0">{children}</main>
           </div>
           <MobileNav />
+          <ScrollToTop />
         </Providers>
       </body>
     </html>

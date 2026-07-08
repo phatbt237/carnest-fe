@@ -1,20 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Star, Users, UserPlus, UserMinus, Package, MessageCircle, BadgeCheck } from "lucide-react";
+import { Star, Users, UserPlus, UserMinus, Package, MessageCircle, BadgeCheck, Settings, Loader2, Info, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProductCard } from "@/components/product/product-card";
 import { ProductCardSkeleton } from "@/components/product/product-card-skeleton";
 import { productsApi } from "@/lib/api/products";
 import { shopsApi } from "@/lib/api/shops";
+import { showcasesApi } from "@/lib/api/showcases";
 import { useAuth } from "@/lib/context/auth-context";
-import { getErrorMessage } from "@/lib/utils";
+import { getErrorMessage, formatCompact } from "@/lib/utils";
 import { ReviewList } from "@/components/review/review-list";
 import { ReportModal } from "@/components/report/report-modal";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 import type { Shop } from "@/types";
 
 interface Props {
@@ -25,6 +28,19 @@ export function ShopDetailClient({ shop: initialShop }: Props) {
   const { isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [shop, setShop] = useState(initialShop);
+
+  // The initial shop data is fetched server-side without the user's auth token,
+  // so isFollowing/isOwner come back generic. Re-fetch client-side to get the real values.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    shopsApi
+      .getBySlug(initialShop.slug)
+      .then((fresh) => {
+        setShop((s) => ({ ...s, isFollowing: fresh.isFollowing, isOwner: fresh.isOwner }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, initialShop.slug]);
 
   const productsQuery = useInfiniteQuery({
     queryKey: ["shop-products", shop.id],
@@ -38,6 +54,20 @@ export function ShopDetailClient({ shop: initialShop }: Props) {
   });
 
   const products = productsQuery.data?.pages.flatMap((p) => p.items) ?? [];
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!productsQuery.hasNextPage,
+    isLoading: productsQuery.isFetchingNextPage,
+    onLoadMore: productsQuery.fetchNextPage,
+  });
+
+  const showcasesQuery = useQuery({
+    queryKey: ["shop-showcases", shop.owner?.id],
+    queryFn: () => showcasesApi.getByUser(shop.owner!.id),
+    enabled: !!shop.owner?.id,
+  });
+
+  const showcases = showcasesQuery.data ?? [];
 
   const followMutation = useMutation({
     mutationFn: () =>
@@ -81,101 +111,150 @@ export function ShopDetailClient({ shop: initialShop }: Props) {
 
       {/* Shop info */}
       <div className="container mx-auto px-4">
-        <div className="relative -mt-12 mb-6 flex flex-col sm:flex-row items-start sm:items-end gap-4">
-          {/* Avatar */}
-          <div className="h-24 w-24 rounded-xl overflow-hidden border-4 border-white bg-white shadow-lg relative shrink-0">
-            {shop.logoUrl ? (
-              <Image
-                src={shop.logoUrl}
-                alt={shop.shopName}
-                fill
-                className="object-cover"
-                sizes="96px"
-              />
-            ) : (
-              <div className="h-full w-full flex items-center justify-center text-3xl font-bold text-carnest-blue">
-                {shop.shopName.charAt(0)}
+        <div className="mb-6 flex flex-col items-start sm:flex-row sm:items-center gap-4 pt-3">
+          {/* Avatar — overlaps the banner above */}
+          <div className="relative shrink-0 -mt-14 sm:-mt-12">
+            <div className="relative h-24 w-24 rounded-full overflow-hidden border-4 border-white bg-white shadow-lg">
+              {shop.logoUrl ? (
+                <Image
+                  src={shop.logoUrl}
+                  alt={shop.shopName}
+                  fill
+                  className="object-cover"
+                  sizes="96px"
+                />
+              ) : (
+                <div className="h-full w-full flex items-center justify-center text-3xl font-bold text-carnest-blue">
+                  {shop.shopName.charAt(0)}
+                </div>
+              )}
+            </div>
+            {shop.isVerified && (
+              <div className="absolute -top-2 -right-2 h-7 w-7 bg-emerald-500 rounded-full flex items-center justify-center ring-2 ring-white shadow-md">
+                <BadgeCheck className="h-4 w-4 text-white" />
               </div>
             )}
           </div>
 
-          <div className="flex-1 pb-2">
+          <div className="flex-1">
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
               {shop.shopName}
-              {shop.isVerified && (
-                <BadgeCheck className="h-6 w-6 text-blue-500 shrink-0" title="Shop đã xác minh" />
-              )}
             </h1>
+            {shop.isVerified && (
+              <p className="text-xs text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
+                <BadgeCheck className="h-3.5 w-3.5" />
+                Shop đã xác minh
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 mt-1">
               <span className="flex items-center gap-1">
                 <Star className="h-4 w-4 text-yellow-400 fill-yellow-400" />
                 <strong>{shop.rating?.toFixed(1) || "Chưa có"}</strong>
                 {shop.reviewCount > 0 && (
-                  <span>({shop.reviewCount} đánh giá)</span>
+                  <span>({formatCompact(shop.reviewCount)} đánh giá)</span>
                 )}
               </span>
               <span className="flex items-center gap-1">
                 <Users className="h-4 w-4" />
-                <strong>{shop.followerCount}</strong> followers
+                <strong>{formatCompact(shop.followerCount)}</strong> followers
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              asChild
-              className="gap-1.5 border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white"
-            >
-              <a href={`/chat?receiverId=${shop.owner.id}`}>
-                <MessageCircle className="h-4 w-4" />
-                Nhắn tin
-              </a>
-            </Button>
-            <ReportModal targetType="USER" targetId={shop.owner.id} />
-          </div>
-          <Button
-            onClick={handleFollow}
-            disabled={followMutation.isPending}
-            variant={shop.isFollowing ? "outline" : "default"}
-            className={
-              shop.isFollowing
-                ? "border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white"
-                : "bg-carnest-blue hover:bg-carnest-blue-dark text-white"
-            }
-          >
-            {shop.isFollowing ? (
-              <>
-                <UserMinus className="mr-1.5 h-4 w-4" />
-                Đang theo dõi
-              </>
+          <div className="flex items-center gap-2 flex-wrap">
+            {shop.isOwner ? (
+              <Button asChild className="gap-1.5 bg-carnest-blue hover:bg-carnest-blue-dark text-white">
+                <Link href="/dashboard/shop">
+                  <Settings className="h-4 w-4" />
+                  Quản lý shop
+                </Link>
+              </Button>
             ) : (
               <>
-                <UserPlus className="mr-1.5 h-4 w-4" />
-                Theo dõi
+                <Button
+                  variant="outline"
+                  size="sm"
+                  asChild
+                  className="gap-1.5 border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white"
+                >
+                  <a href={`/chat?receiverId=${shop.owner?.id}`}>
+                    <MessageCircle className="h-4 w-4" />
+                    Nhắn tin
+                  </a>
+                </Button>
+                {shop.owner && <ReportModal targetType="USER" targetId={shop.owner.id} />}
+                <Button
+                  onClick={handleFollow}
+                  disabled={followMutation.isPending}
+                  variant={shop.isFollowing ? "outline" : "default"}
+                  className={
+                    shop.isFollowing
+                      ? "border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white"
+                      : "bg-carnest-blue hover:bg-carnest-blue-dark text-white"
+                  }
+                >
+                  {shop.isFollowing ? (
+                    <>
+                      <UserMinus className="mr-1.5 h-4 w-4" />
+                      Đang theo dõi
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="mr-1.5 h-4 w-4" />
+                      Theo dõi
+                    </>
+                  )}
+                </Button>
               </>
             )}
-          </Button>
+          </div>
         </div>
 
         {/* Tabs */}
         <Tabs defaultValue="products" className="pb-10">
-          <TabsList className="mb-6">
-            <TabsTrigger value="products">
-              <Package className="mr-1.5 h-4 w-4" />
-              Sản phẩm
+          <TabsList className="mb-6 grid h-auto w-full grid-cols-2 gap-1.5 p-1.5 md:flex md:h-9 md:w-fit md:gap-0 md:p-1">
+            <TabsTrigger
+              value="products"
+              className="h-auto flex-col gap-0.5 py-2 text-[11px] md:flex-row md:py-1 md:text-sm"
+            >
+              <Package className="h-4 w-4 md:mr-1.5" />
+              <span>Sản phẩm</span>
             </TabsTrigger>
-            <TabsTrigger value="reviews">
-              <Star className="mr-1.5 h-4 w-4" />
-              Đánh giá
-              {shop.reviewCount > 0 && (
-                <span className="ml-1.5 text-xs text-gray-500">
-                  ({shop.reviewCount})
-                </span>
-              )}
+            <TabsTrigger
+              value="reviews"
+              className="h-auto flex-col gap-0.5 py-2 text-[11px] md:flex-row md:py-1 md:text-sm"
+            >
+              <Star className="h-4 w-4 md:mr-1.5" />
+              <span className="flex items-center gap-1">
+                Đánh giá
+                {shop.reviewCount > 0 && (
+                  <span className="text-[10px] text-gray-500 md:text-xs">
+                    ({formatCompact(shop.reviewCount)})
+                  </span>
+                )}
+              </span>
             </TabsTrigger>
-            <TabsTrigger value="info">Thông tin</TabsTrigger>
+            <TabsTrigger
+              value="showcases"
+              className="h-auto flex-col gap-0.5 py-2 text-[11px] md:flex-row md:py-1 md:text-sm"
+            >
+              <Sparkles className="h-4 w-4 md:mr-1.5" />
+              <span className="flex items-center gap-1">
+                Bộ sưu tập
+                {showcases.length > 0 && (
+                  <span className="text-[10px] text-gray-500 md:text-xs">
+                    ({showcases.length})
+                  </span>
+                )}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="info"
+              className="h-auto flex-col gap-0.5 py-2 text-[11px] md:flex-row md:py-1 md:text-sm"
+            >
+              <Info className="h-4 w-4 md:mr-1.5" />
+              <span>Thông tin</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="products">
@@ -198,14 +277,10 @@ export function ShopDetailClient({ shop: initialShop }: Props) {
                   ))}
                 </div>
                 {productsQuery.hasNextPage && (
-                  <div className="text-center mt-8">
-                    <Button
-                      variant="outline"
-                      onClick={() => productsQuery.fetchNextPage()}
-                      disabled={productsQuery.isFetchingNextPage}
-                    >
-                      {productsQuery.isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-                    </Button>
+                  <div ref={sentinelRef} className="flex justify-center py-8">
+                    {productsQuery.isFetchingNextPage && (
+                      <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                    )}
                   </div>
                 )}
               </>
@@ -213,7 +288,54 @@ export function ShopDetailClient({ shop: initialShop }: Props) {
           </TabsContent>
 
           <TabsContent value="reviews">
-            <ReviewList shopId={shop.id} shopOwnerId={shop.owner.id} />
+            <ReviewList shopId={shop.id} shopOwnerId={shop.owner?.id ?? 0} />
+          </TabsContent>
+
+          <TabsContent value="showcases">
+            {showcasesQuery.isLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-48 rounded-xl border bg-gray-100 animate-pulse" />
+                ))}
+              </div>
+            ) : showcases.length === 0 ? (
+              <div className="text-center py-16 text-gray-500">
+                <Sparkles className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                <p>Chưa có bộ sưu tập nào</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {showcases.map((sc) => (
+                  <Link
+                    key={sc.id}
+                    href={`/showcases/${sc.id}`}
+                    className="group rounded-xl border bg-white overflow-hidden hover:shadow-md transition-shadow"
+                  >
+                    <div className="relative h-36 bg-gradient-to-br from-carnest-blue/20 to-carnest-gold/20 overflow-hidden">
+                      {sc.coverImageUrl && (
+                        <Image
+                          src={sc.coverImageUrl}
+                          alt={sc.name}
+                          fill
+                          className="object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      )}
+                    </div>
+                    <div className="p-4">
+                      <h3 className="font-semibold text-gray-900">{sc.name}</h3>
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {sc.description}
+                      </p>
+                      <div className="flex gap-4 text-xs text-gray-400 mt-3">
+                        <span>{sc.itemCount} xe</span>
+                        <span>♥ {sc.likeCount}</span>
+                        <span>{sc.viewCount} lượt xem</span>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="info">

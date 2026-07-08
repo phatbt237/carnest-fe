@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Truck, TrendingUp, Car } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, getDiscountPercent } from "@/lib/utils";
+import { cn, formatCurrency, getDiscountPercent, formatCompact } from "@/lib/utils";
 import type { Product } from "@/types";
 import { CONDITION_LABELS } from "@/types";
 
@@ -40,6 +40,7 @@ function ProductImage({ src, alt }: { src: string; alt: string }) {
       src={src}
       alt={alt}
       fill
+      loading="lazy"
       className="object-cover transition-transform duration-500 ease-out group-hover:scale-[1.06]"
       sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
       onError={() => setError(true)}
@@ -48,11 +49,16 @@ function ProductImage({ src, alt }: { src: string; alt: string }) {
 }
 
 export function ProductCard({ product }: ProductCardProps) {
-  const discount = product.originalPrice
-    ? getDiscountPercent(product.price, product.originalPrice)
+  const hasDiscount = !!product.originalPrice && product.originalPrice > product.price;
+  const discount = hasDiscount
+    ? getDiscountPercent(product.price, product.originalPrice!)
     : 0;
 
-  const mainImage = product.imageUrls?.[0] || "";
+  const mainImage =
+    product.primaryImage ||
+    product.images?.[0]?.imageUrl ||
+    product.imageUrls?.[0] ||
+    "";
   const isOutOfStock = product.quantity === 0;
 
   return (
@@ -71,30 +77,34 @@ export function ProductCard({ product }: ProductCardProps) {
           {/* Gradient overlay — bottom */}
           <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/10 to-transparent pointer-events-none" />
 
-          {/* Top-left badges */}
-          <div className="absolute top-2.5 left-2.5 flex flex-col gap-1">
-            {discount > 0 && (
-              <span className="inline-flex items-center rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white leading-none">
+          {/* Top-left: discount badge */}
+          {discount > 0 && (
+            <div className="absolute top-2.5 left-2.5">
+              <span className="inline-flex items-center rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white leading-none ring-1 ring-white/40 shadow-[0_2px_8px_rgba(0,0,0,0.4)] tracking-wide">
                 -{discount}%
               </span>
-            )}
-            {product.freeShipping && (
-              <span className="inline-flex items-center gap-0.5 rounded-md bg-emerald-600/90 backdrop-blur-sm px-1.5 py-0.5 text-[10px] font-semibold text-white leading-none">
-                <Truck className="h-2.5 w-2.5" />
-                Free ship
-              </span>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Top-right condition badge */}
+          {/* Top-right: condition badge */}
           <div className="absolute top-2.5 right-2.5">
             <Badge
               variant={CONDITION_BADGE_VARIANT[product.condition] || "outline"}
-              className="text-[10px] px-1.5 py-0 rounded-md"
+              className="text-[10px] px-2 py-0.5 rounded-full ring-1 ring-white/50 shadow-[0_2px_8px_rgba(0,0,0,0.4)] tracking-wide"
             >
               {CONDITION_LABELS[product.condition]}
             </Badge>
           </div>
+
+          {/* Bottom-left: freeship badge */}
+          {product.freeShipping && (
+            <div className="absolute bottom-2.5 left-2.5">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-1 text-[10px] font-bold text-white leading-none ring-1 ring-white/40 shadow-[0_2px_10px_rgba(0,0,0,0.45)] tracking-wide">
+                <Truck className="h-2.5 w-2.5 shrink-0" />
+                Miễn ship
+              </span>
+            </div>
+          )}
 
           {/* Out of stock overlay */}
           {isOutOfStock && (
@@ -122,21 +132,24 @@ export function ProductCard({ product }: ProductCardProps) {
             {product.name}
           </h3>
 
-          {/* Price + sold count on same row */}
-          <div className="flex items-baseline justify-between gap-1">
-            <div className="flex items-baseline gap-1.5">
+          {/* Price + sold count — sold count always aligns with the new price row */}
+          <div className="flex items-start justify-between gap-1">
+            <div className="flex flex-col">
               <span className="text-[15px] font-bold text-carnest-gold leading-none">
                 {formatCurrency(product.price)}
               </span>
-              {product.originalPrice && product.originalPrice > product.price && (
-                <span className="text-[11px] text-gray-350 line-through">
-                  {formatCurrency(product.originalPrice)}
-                </span>
-              )}
+              <span
+                className={cn(
+                  "text-[11px] text-gray-350 line-through mt-1",
+                  !hasDiscount && "invisible"
+                )}
+              >
+                {formatCurrency(product.originalPrice ?? product.price)}
+              </span>
             </div>
             <span className="flex items-center gap-0.5 text-[11px] text-gray-400 shrink-0">
               <TrendingUp className="h-2.5 w-2.5" />
-              {product.soldCount > 0 ? `Đã bán ${product.soldCount}` : "Chưa bán"}
+              {product.soldCount > 0 ? `Đã bán ${formatCompact(product.soldCount)}` : "Chưa bán"}
             </span>
           </div>
         </div>

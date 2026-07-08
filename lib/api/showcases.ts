@@ -3,11 +3,21 @@ import type {
   ApiResponse,
   CreateShowcaseItemRequest,
   CreateShowcaseRequest,
+  CursorPage,
   Showcase,
   ShowcaseItem,
 } from "@/types";
 
 export const showcasesApi = {
+  list: async (params: {
+    sortBy?: "newest" | "popular";
+    cursor?: string;
+    size?: number;
+  } = {}): Promise<CursorPage<Showcase>> => {
+    const res = await apiClient.get<ApiResponse<CursorPage<Showcase>>>("/api/showcases", { params });
+    return res.data.data;
+  },
+
   create: async (data: CreateShowcaseRequest): Promise<Showcase> => {
     const res = await apiClient.post<ApiResponse<Showcase>>("/api/showcases", data);
     return res.data.data;

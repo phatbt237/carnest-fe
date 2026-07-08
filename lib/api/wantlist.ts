@@ -39,4 +39,12 @@ export const wantlistApi = {
     );
     return res.data.data;
   },
+
+  contact: async (id: number, content: string, imageUrls?: string[]): Promise<void> => {
+    await apiClient.post(`/api/wantlist/${id}/contact`, {
+      content,
+      type: imageUrls?.length ? "IMAGE" : "TEXT",
+      ...(imageUrls?.length ? { imageUrls } : {}),
+    });
+  },
 };

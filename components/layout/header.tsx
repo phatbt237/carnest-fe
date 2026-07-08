@@ -7,6 +7,7 @@ import {
   Car,
   Search,
   ShoppingCart,
+  ShoppingBag,
   User,
   Menu,
   LogOut,
@@ -35,11 +36,12 @@ import { NotificationBell } from "@/components/notification/notification-bell";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
-  { href: "/products", label: "Sản phẩm" },
-  { href: "/shops", label: "Cửa hàng" },
-  { href: "/auctions", label: "Đấu giá" },
-  { href: "/categories/diecast", label: "Diecast" },
+  { href: "/products", label: "Sản phẩm", icon: ShoppingBag },
+  { href: "/shops", label: "Cửa hàng", icon: Store },
+  { href: "/auctions", label: "Đấu giá", icon: Gavel },
+  { href: "/categories/diecast", label: "Diecast", icon: Car },
 ];
+
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -53,6 +55,7 @@ export function Header() {
     queryKey: ["cart"],
     queryFn: cartApi.get,
     enabled: isAuthenticated,
+    staleTime: 2 * 60 * 1000,
   });
 
   useEffect(() => {
@@ -126,6 +129,17 @@ export function Header() {
           <div className="flex items-center gap-1 ml-auto md:ml-0">
             {/* Notification Bell */}
             <NotificationBell />
+
+            {/* Chat — mobile only */}
+            <Link href="/chat" className="md:hidden">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative text-white/70 hover:text-white hover:bg-white/8 rounded-lg h-9 w-9 transition-all"
+              >
+                <MessageCircle className="h-[18px] w-[18px]" />
+              </Button>
+            </Link>
 
             {/* Cart */}
             <Link href="/cart">
@@ -215,12 +229,12 @@ export function Header() {
                       )}
                       {user?.role === "ADMIN" && (
                         <Link
-                          href="/admin/categories"
+                          href="/admin"
                           onClick={() => setUserMenuOpen(false)}
-                          className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:bg-white/6 transition-colors"
+                          className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-300/80 hover:text-red-200 hover:bg-red-500/8 transition-colors"
                         >
-                          <Gavel className="h-3.5 w-3.5 text-white/40" />
-                          Admin
+                          <Gavel className="h-3.5 w-3.5 text-red-400/50" />
+                          Quản trị hệ thống
                         </Link>
                       )}
                       <div className="border-t border-white/8 mt-1 pt-1">
@@ -298,8 +312,9 @@ export function Header() {
                       key={item.href}
                       href={item.href}
                       onClick={() => setMobileOpen(false)}
-                      className="flex items-center px-3 py-2.5 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/10 transition-all"
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/10 transition-all"
                     >
+                      <item.icon className="h-4 w-4 text-white/40" />
                       {item.label}
                     </Link>
                   ))}
@@ -334,12 +349,12 @@ export function Header() {
                       )}
                       {user?.role === "ADMIN" && (
                         <Link
-                          href="/admin/categories"
+                          href="/admin"
                           onClick={() => setMobileOpen(false)}
                           className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-red-400/80 hover:text-red-300 hover:bg-red-500/8 transition-all"
                         >
                           <Gavel className="h-4 w-4" />
-                          Admin
+                          Quản trị hệ thống
                         </Link>
                       )}
                       <div className="border-t border-white/10 mt-2 pt-2">
@@ -381,8 +396,9 @@ export function Header() {
             <Link
               key={item.href}
               href={item.href}
-              className="relative px-3.5 py-1.5 text-[13px] font-medium text-white/55 hover:text-white rounded-md transition-all duration-200 hover:bg-white/6 group"
+              className="relative px-3.5 py-1.5 text-[13px] font-medium text-white/55 hover:text-white rounded-md transition-all duration-200 hover:bg-white/6 group flex items-center gap-1.5"
             >
+              <item.icon className="h-3.5 w-3.5 shrink-0" />
               {item.label}
               <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[2px] rounded-full bg-carnest-gold group-hover:w-4 transition-all duration-200" />
             </Link>
@@ -413,7 +429,7 @@ export function Header() {
                 </Link>
               )}
               {user?.role === "ADMIN" && (
-                <Link href="/admin/categories" className="relative px-3 py-1.5 text-[13px] font-medium text-red-400/80 hover:text-red-300 rounded-md transition-all duration-200 hover:bg-red-500/8 flex items-center gap-1.5 group">
+                <Link href="/admin" className="relative px-3 py-1.5 text-[13px] font-medium text-red-400/80 hover:text-red-300 rounded-md transition-all duration-200 hover:bg-red-500/8 flex items-center gap-1.5 group">
                   <Gavel className="h-3.5 w-3.5" />
                   Admin
                   <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-[2px] rounded-full bg-red-400 group-hover:w-4 transition-all duration-200" />

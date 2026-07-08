@@ -101,7 +101,7 @@ function TradeCard({
 
       {trade.message && (
         <p className="text-sm text-gray-600 italic bg-gray-50 rounded-lg px-3 py-2 mb-3">
-          "{trade.message}"
+          &quot;{trade.message}&quot;
         </p>
       )}
 

@@ -14,8 +14,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { SlidersHorizontal, Package } from "lucide-react";
+import { SlidersHorizontal, Package, Loader2 } from "lucide-react";
 import type { ProductFilter as ProductFilterType } from "@/types";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 
 export function ProductsContent() {
   const searchParams = useSearchParams();
@@ -56,6 +57,12 @@ export function ProductsContent() {
 
   const products = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.totalElements ?? 0;
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -125,15 +132,10 @@ export function ProductsContent() {
               </div>
 
               {hasNextPage && (
-                <div className="text-center mt-8">
-                  <Button
-                    variant="outline"
-                    onClick={() => fetchNextPage()}
-                    disabled={isFetchingNextPage}
-                    className="px-8"
-                  >
-                    {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-                  </Button>
+                <div ref={sentinelRef} className="flex justify-center py-8">
+                  {isFetchingNextPage && (
+                    <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                  )}
                 </div>
               )}
             </>

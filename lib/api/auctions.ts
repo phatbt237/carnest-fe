@@ -3,9 +3,11 @@ import type {
   ApiResponse,
   Auction,
   AuctionBid,
+  AuctionStatus,
   BidRequest,
   CreateAuctionRequest,
   CursorPage,
+  MyAuction,
 } from "@/types";
 
 export const auctionsApi = {
@@ -54,5 +56,17 @@ export const auctionsApi = {
 
   cancel: async (auctionId: number): Promise<void> => {
     await apiClient.put(`/api/auctions/${auctionId}/cancel`);
+  },
+
+  myAuctions: async (params: {
+    status?: AuctionStatus;
+    cursor?: string;
+    size?: number;
+  } = {}): Promise<CursorPage<MyAuction>> => {
+    const res = await apiClient.get<ApiResponse<CursorPage<MyAuction>>>(
+      "/api/auctions/my",
+      { params }
+    );
+    return res.data.data;
   },
 };

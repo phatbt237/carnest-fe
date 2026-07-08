@@ -37,9 +37,12 @@ export function useCountdown(targetDate: string | null): CountdownResult {
     return { days, hours, minutes, seconds, isExpired: false, formatted };
   };
 
-  const [state, setState] = useState<CountdownResult>(calculate);
+  const [state, setState] = useState<CountdownResult>({
+    days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: false, formatted: "00:00:00",
+  });
 
   useEffect(() => {
+    setState(calculate());
     const timer = setInterval(() => setState(calculate()), 1000);
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps

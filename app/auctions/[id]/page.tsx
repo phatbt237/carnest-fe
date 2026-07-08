@@ -17,9 +17,12 @@ import {
   ChevronUp,
   Trophy,
   Bot,
+  Crown,
+  Share2,
+  CheckCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -27,7 +30,7 @@ import { CountdownTimer } from "@/components/auction/countdown-timer";
 import { auctionsApi } from "@/lib/api/auctions";
 import { useAuctionWebSocket } from "@/lib/hooks/use-auction-ws";
 import { useAuth } from "@/lib/context/auth-context";
-import { formatCurrency, formatDateTime, getErrorMessage } from "@/lib/utils";
+import { formatCurrency, formatDateTime, getErrorMessage, formatCompact } from "@/lib/utils";
 import type { Auction, AuctionBidEvent } from "@/types";
 
 export default function AuctionDetailPage() {
@@ -37,9 +40,22 @@ export default function AuctionDetailPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  const [bidAmount, setBidAmount] = useState("");
-  const [maxAutoBid, setMaxAutoBid] = useState("");
+  const [bidAmount, setBidAmount] = useState(0);
+  const [maxAutoBid, setMaxAutoBid] = useState(0);
   const [showBids, setShowBids] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [activeImage, setActiveImage] = useState(0);
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      await navigator.share({ title: auction?.product?.name, url }).catch(() => {});
+    } else {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const { data: auction, isLoading } = useQuery({
     queryKey: ["auction", auctionId],
@@ -59,19 +75,13 @@ export default function AuctionDetailPage() {
             currentPrice: event.currentPrice,
             bidCount: event.bidCount,
             totalBids: event.bidCount,
-            highestBidder: event.highestBidder
-              ? { ...old.highestBidder, ...event.highestBidder }
-              : old.highestBidder,
+            highestBidder: event.highestBidder ?? old.highestBidder,
             endTime: event.endTime || old.endTime,
             status: event.type === "AUCTION_ENDED" ? "ENDED" : old.status,
           };
         }
       );
-      if (event.type === "NEW_BID") {
-        toast.info(
-          `Có bid mới: ${formatCurrency(event.currentPrice)} từ ${event.highestBidder?.username || "ẩn danh"}`
-        );
-      } else if (event.type === "AUCTION_ENDED") {
+      if (event.type === "AUCTION_ENDED") {
         toast.success(
           event.winner
             ? `Đấu giá kết thúc! Người chiến thắng: ${event.winner.username}`
@@ -91,44 +101,55 @@ export default function AuctionDetailPage() {
   useEffect(() => {
     if (auction) {
       const minBid = auction.currentPrice + auction.bidIncrement;
-      setBidAmount(String(minBid));
+      setBidAmount(minBid);
     }
   }, [auction]);
 
   const bidMutation = useMutation({
-    mutationFn: () =>
-      auctionsApi.bid(auctionId, {
-        bidAmount: Number(bidAmount),
-        maxAutoBid: maxAutoBid ? Number(maxAutoBid) : undefined,
-      }),
-    onSuccess: () => {
-      toast.success("Đặt bid thành công!");
-      setBidAmount("");
-      setMaxAutoBid("");
+    mutationFn: ({ amount, maxAuto }: { amount: number; maxAuto?: number }) =>
+      auctionsApi.bid(auctionId, { bidAmount: amount, maxAutoBid: maxAuto }),
+    onMutate: async ({ amount }) => {
+      // Optimistic update: hiển thị giá mới ngay lập tức, không chờ API
+      await queryClient.cancelQueries({ queryKey: ["auction", auctionId] });
+      const previous = queryClient.getQueryData<Auction>(["auction", auctionId]);
+      queryClient.setQueryData(["auction", auctionId], (old: Auction | undefined) => {
+        if (!old) return old;
+        return {
+          ...old,
+          currentPrice: amount,
+          bidCount: (old.bidCount ?? 0) + 1,
+          totalBids: (old.totalBids ?? 0) + 1,
+        };
+      });
+      return { previous };
     },
-    onError: (err) => toast.error(getErrorMessage(err)),
+    onSuccess: (data) => {
+      // Đè bằng data thực từ server — chính xác nhất
+      queryClient.setQueryData(["auction", auctionId], data);
+      toast.success("Đặt bid thành công!");
+      setBidAmount(data.currentPrice + data.bidIncrement);
+      setMaxAutoBid(0);
+    },
+    onError: (err, _, context) => {
+      // Revert về giá cũ nếu API thất bại
+      if (context?.previous) {
+        queryClient.setQueryData(["auction", auctionId], context.previous);
+      }
+      toast.error(getErrorMessage(err));
+    },
   });
 
   const handleBid = () => {
-    if (!isAuthenticated) {
-      toast.error("Vui lòng đăng nhập");
-      return;
-    }
-    if (!bidAmount || Number(bidAmount) <= 0) {
-      toast.error("Nhập số tiền bid hợp lệ");
-      return;
-    }
-    bidMutation.mutate();
+    if (!isAuthenticated) { toast.error("Vui lòng đăng nhập"); return; }
+    const amount = bidAmount;
+    if (!amount || amount <= 0) { toast.error("Nhập số tiền bid hợp lệ"); return; }
+    bidMutation.mutate({ amount, maxAuto: maxAutoBid > 0 ? maxAutoBid : undefined });
   };
 
   const handleBuyNow = () => {
-    if (!isAuthenticated) {
-      toast.error("Vui lòng đăng nhập");
-      return;
-    }
+    if (!isAuthenticated) { toast.error("Vui lòng đăng nhập"); return; }
     if (auction?.buyNowPrice) {
-      setBidAmount(String(auction.buyNowPrice));
-      bidMutation.mutate();
+      bidMutation.mutate({ amount: auction.buyNowPrice });
     }
   };
 
@@ -149,7 +170,18 @@ export default function AuctionDetailPage() {
   }
 
   const minNextBid = auction.currentPrice + auction.bidIncrement;
-  const image = auction.product?.imageUrls?.[0] || "/placeholder-car.jpg";
+
+  // Collect all images from all possible sources
+  const allImages: string[] = (() => {
+    const p = auction.product;
+    const fromImages = p?.images?.map((img) => img.imageUrl).filter(Boolean) ?? [];
+    const fromUrls = (p?.imageUrls ?? []).filter(Boolean) as string[];
+    const fromPrimary = p?.primaryImage ? [p.primaryImage] : [];
+    const merged = fromImages.length > 0 ? fromImages : fromUrls.length > 0 ? fromUrls : fromPrimary;
+    return merged.filter((url, i) => merged.indexOf(url) === i);
+  })();
+
+  const mainImage = allImages[activeImage] ?? allImages[0] ?? "/placeholder-car.jpg";
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -163,11 +195,11 @@ export default function AuctionDetailPage() {
       </nav>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Product image */}
+        {/* Product image gallery */}
         <div className="space-y-3">
           <div className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
             <Image
-              src={image}
+              src={mainImage}
               alt={auction.product?.name}
               fill
               className="object-cover"
@@ -181,7 +213,39 @@ export default function AuctionDetailPage() {
                 </Badge>
               </div>
             )}
+            {auction.status === "ENDED" && (
+              <div className="absolute top-3 left-3">
+                <Badge variant="secondary" className="bg-gray-800/80 text-gray-200 border-gray-700">
+                  Đã kết thúc
+                </Badge>
+              </div>
+            )}
+            {allImages.length > 1 && (
+              <div className="absolute bottom-3 right-3 bg-black/50 text-white text-xs rounded-full px-2 py-0.5">
+                {activeImage + 1} / {allImages.length}
+              </div>
+            )}
           </div>
+
+          {/* Thumbnail strip */}
+          {allImages.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {allImages.map((url, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setActiveImage(idx)}
+                  className={`relative h-16 w-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${
+                    activeImage === idx
+                      ? "border-carnest-blue ring-1 ring-carnest-blue"
+                      : "border-gray-200 hover:border-gray-400"
+                  }`}
+                >
+                  <Image src={url} alt="" fill className="object-cover" sizes="64px" />
+                </button>
+              ))}
+            </div>
+          )}
+
           <Link
             href={`/products/${auction.product?.slug}`}
             className="text-sm text-carnest-blue hover:underline"
@@ -193,9 +257,20 @@ export default function AuctionDetailPage() {
         {/* Auction info */}
         <div className="space-y-5">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {auction.product?.name}
-            </h1>
+            <div className="flex items-start gap-2">
+              <h1 className="text-2xl font-bold text-gray-900 flex-1">
+                {auction.product?.name}
+              </h1>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleShare}
+                className="shrink-0 text-gray-400 hover:text-gray-600 h-8 w-8"
+                title={copied ? "Đã sao chép link!" : "Chia sẻ"}
+              >
+                {copied ? <CheckCheck className="h-4 w-4 text-green-500" /> : <Share2 className="h-4 w-4" />}
+              </Button>
+            </div>
             <p className="text-sm text-gray-500 mt-1">
               {auction.product?.carBrand} · {auction.product?.scale} ·{" "}
               {auction.product?.condition}
@@ -211,13 +286,8 @@ export default function AuctionDetailPage() {
             <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
               <span className="flex items-center gap-1">
                 <Users className="h-3.5 w-3.5" />
-                {auction.totalBids ?? auction.bidCount} lượt đặt
+                {formatCompact(auction.totalBids ?? auction.bidCount)} lượt đặt
               </span>
-              {auction.highestBidder && (
-                <span>
-                  Cao nhất: <strong>{(auction.highestBidder as unknown as { username: string })?.username}</strong>
-                </span>
-              )}
             </div>
             {connected && (
               <p className="text-xs text-green-600 flex items-center gap-1 mt-2">
@@ -225,6 +295,38 @@ export default function AuctionDetailPage() {
                 Đang cập nhật realtime
               </p>
             )}
+
+            {/* Highest bidder — fallback to recentBids[0] nếu API không trả highestBidder */}
+            {(() => {
+              const leader = auction.highestBidder ?? (auction.recentBids?.[0] ? {
+                username: auction.recentBids[0].bidderUsername,
+                fullName: auction.recentBids[0].bidderUsername,
+                avatarUrl: auction.recentBids[0].bidderAvatar ?? null,
+              } : null);
+              if (!leader) return null;
+              return (
+                <div className="mt-3 pt-3 border-t border-orange-200 flex items-center gap-3">
+                  <div className="relative shrink-0">
+                    <div className="h-9 w-9 rounded-full bg-gradient-to-br from-carnest-orange to-orange-400 flex items-center justify-center text-sm font-bold text-white overflow-hidden">
+                      {leader.avatarUrl ? (
+                        <img src={leader.avatarUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        leader.username.charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-yellow-400 border border-white flex items-center justify-center">
+                      <Crown className="h-2.5 w-2.5 text-yellow-800" />
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-400">Người đang dẫn đầu</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {leader.fullName || leader.username}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Countdown */}
@@ -244,10 +346,34 @@ export default function AuctionDetailPage() {
             </div>
           )}
 
+          {/* Ended banner */}
+          {auction.status === "ENDED" && (
+            <div className="p-5 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
+              <div className="flex items-center gap-2 text-gray-700 font-semibold">
+                <Trophy className="h-5 w-5 text-yellow-500" />
+                Phiên đấu giá đã kết thúc
+              </div>
+              {(auction.highestBidder ?? auction.recentBids?.[0]) && (
+                <p className="text-sm text-gray-500">
+                  Người chiến thắng:{" "}
+                  <strong className="text-gray-900">
+                    {auction.highestBidder?.fullName ||
+                      auction.highestBidder?.username ||
+                      auction.recentBids?.[0]?.bidderUsername}
+                  </strong>
+                  {" "}với giá{" "}
+                  <strong className="text-carnest-orange">
+                    {formatCurrency(auction.currentPrice)}
+                  </strong>
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Bid form */}
           {auction.status === "ACTIVE" && (
             <div className="p-5 rounded-xl border bg-white space-y-4">
-              <h3 className="font-semibold text-gray-900">Đặt bid</h3>
+              <h3 className="font-semibold text-gray-900">Đặt đấu giá</h3>
               <p className="text-xs text-gray-500">
                 Bid tối thiểu:{" "}
                 <strong className="text-carnest-blue">
@@ -258,13 +384,11 @@ export default function AuctionDetailPage() {
 
               <div>
                 <Label>Số tiền bid (VNĐ)</Label>
-                <Input
-                  type="number"
+                <FormattedNumberInput
                   value={bidAmount}
-                  onChange={(e) => setBidAmount(e.target.value)}
+                  onChange={setBidAmount}
                   className="mt-1"
                   min={minNextBid}
-                  step={auction.bidIncrement}
                 />
               </div>
 
@@ -272,10 +396,9 @@ export default function AuctionDetailPage() {
                 <Label>
                   Auto-bid tối đa (tùy chọn)
                 </Label>
-                <Input
-                  type="number"
+                <FormattedNumberInput
                   value={maxAutoBid}
-                  onChange={(e) => setMaxAutoBid(e.target.value)}
+                  onChange={setMaxAutoBid}
                   className="mt-1"
                   placeholder="Tự động bid đến mức này"
                 />
@@ -292,7 +415,7 @@ export default function AuctionDetailPage() {
                   disabled={bidMutation.isPending}
                 >
                   <Gavel className="mr-2 h-5 w-5" />
-                  {bidMutation.isPending ? "Đang đặt bid..." : "~"}
+                  {bidMutation.isPending ? "Đang đặt bid..." : "Đặt đấu giá"}
                 </Button>
 
                 {auction.buyNowPrice && (
@@ -348,7 +471,7 @@ export default function AuctionDetailPage() {
                   <TrendingUp className="h-4 w-4 text-carnest-orange" />
                   Lịch sử đặt giá
                   <span className="rounded-full bg-carnest-orange/10 text-carnest-orange text-xs font-medium px-2 py-0.5">
-                    {auction.totalBids ?? auction.bidCount} lượt
+                    {formatCompact(auction.totalBids ?? auction.bidCount)} lượt
                   </span>
                 </div>
                 {showBids
@@ -378,16 +501,16 @@ export default function AuctionDetailPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1">
                               <span className="text-xs font-medium text-gray-900 truncate">{bid.bidderUsername}</span>
-                              {bid.isAutoBid && (
+                              {bid.isWinning && (
                                 <span className="inline-flex items-center gap-0.5 text-[9px] text-gray-400 bg-gray-100 rounded px-1 shrink-0">
-                                  <Bot className="h-2 w-2" />Auto
+                                  <Bot className="h-2 w-2" />Đang thắng
                                 </span>
                               )}
                             </div>
                             <p className="text-[10px] text-gray-400">{formatDateTime(bid.createdAt)}</p>
                           </div>
                           <span className={`text-xs font-bold shrink-0 ${idx === 0 ? "text-carnest-orange" : "text-gray-600"}`}>
-                            {formatCurrency(bid.amount)}
+                            {formatCurrency(bid.bidAmount)}
                           </span>
                         </div>
                       ))}

@@ -1,18 +1,45 @@
 "use client";
 
+import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Search, MessageCircle, Tag, Scale } from "lucide-react";
+import { Search, MessageCircle, Tag, Ruler, User, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ContactDialog } from "@/components/chat/contact-dialog";
 import { wantlistApi } from "@/lib/api/wantlist";
 import { useAuth } from "@/lib/context/auth-context";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 
 export default function WantListPage() {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
+  const [contactItem, setContactItem] = useState<{ id: number; userId?: number; username: string; title: string } | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
+  const handleContact = (item: { id: number; userId?: number; username: string; title: string }) => {
+    if (!isAuthenticated) {
+      toast.error("Vui lòng đăng nhập để liên hệ");
+      return;
+    }
+    // Known user: jump straight into the chat with the wantlist pre-tagged.
+    // Only fall back to the compose dialog when the poster's user id isn't available.
+    if (item.userId) {
+      const params = new URLSearchParams({
+        receiverId: String(item.userId),
+        username: item.username,
+        tagType: "WANT_LIST",
+        tagId: String(item.id),
+        tagLabel: item.title,
+      });
+      router.push(`/chat?${params.toString()}`);
+      return;
+    }
+    setContactItem({ id: item.id, userId: item.userId, username: item.username, title: item.title });
+  };
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } =
     useInfiniteQuery({
@@ -25,8 +52,14 @@ export default function WantListPage() {
 
   const items = data?.pages.flatMap((p) => p.items) ?? [];
 
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
+
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
+    <div className="container mx-auto px-4 md:px-6 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -49,9 +82,9 @@ export default function WantListPage() {
       </div>
 
       {isLoading ? (
-        <div className="space-y-3">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Skeleton key={i} className="h-64 rounded-2xl" />
           ))}
         </div>
       ) : items.length === 0 ? (
@@ -60,84 +93,132 @@ export default function WantListPage() {
           <p>Chưa có yêu cầu tìm kiếm nào</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-xl border bg-white p-5 hover:shadow-sm transition-shadow"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between">
-                    <h3 className="font-semibold text-gray-900">{item.title}</h3>
-                    <span className="text-xs text-gray-400 shrink-0 ml-2">
-                      {formatDate(item.createdAt)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-1 leading-relaxed">
-                    {item.description}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {items.map((item) => (
+              <div
+                key={item.id}
+                className="group relative flex flex-col gap-3 p-5 rounded-2xl border border-gray-100 bg-carnest-surface hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300"
+              >
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-semibold text-sm text-gray-900 group-hover:text-carnest-gold transition-colors font-heading leading-snug line-clamp-2 flex-1">
+                    {item.title}
                   </p>
-
-                  {/* Tags */}
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {item.carBrand && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-carnest-blue/8 text-carnest-blue px-2.5 py-1 rounded-full">
-                        <Tag className="h-3 w-3" />
-                        {item.carBrand}
-                      </span>
-                    )}
-                    {item.carModel && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">
-                        {item.carModel}
-                      </span>
-                    )}
-                    {item.scale && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-carnest-gold/10 text-carnest-gold px-2.5 py-1 rounded-full">
-                        <Scale className="h-3 w-3" />
-                        {item.scale}
-                      </span>
-                    )}
-                    {item.maxPrice && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full">
-                        Ngân sách: {formatCurrency(item.maxPrice)}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-gray-400 mt-2">
-                    Đăng bởi <strong className="text-gray-600">@{item.username}</strong>
-                  </p>
+                  <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">
+                    {formatDate(item.createdAt)}
+                  </span>
                 </div>
 
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    if (!isAuthenticated) {
-                      toast.error("Vui lòng đăng nhập để liên hệ");
-                      return;
-                    }
-                    router.push("/chat");
-                  }}
-                  className="bg-carnest-orange hover:bg-carnest-orange-dark text-white shrink-0 gap-1.5"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  Nhắn tin
-                </Button>
+                {/* Tags row */}
+                <div className="flex flex-wrap gap-1.5">
+                  {item.carBrand && (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-carnest-navy/6 px-2 py-0.5 text-[11px] font-medium text-carnest-navy">
+                      {item.carBrand}
+                    </span>
+                  )}
+                  {item.carModel && (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                      {item.carModel}
+                    </span>
+                  )}
+                  {item.scale && (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
+                      <Ruler className="h-2.5 w-2.5" />
+                      {item.scale}
+                    </span>
+                  )}
+                </div>
+
+                {/* Description */}
+                {item.description && (
+                  <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                    {item.description}
+                  </p>
+                )}
+
+                {/* Image + username/budget */}
+                <div className="flex gap-5">
+                  {item.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setLightbox(item.imageUrl)}
+                      className="relative aspect-[3/2] w-24 shrink-0 rounded-lg overflow-hidden border border-gray-200 bg-white hover:opacity-90 transition-opacity"
+                    >
+                      <Image src={item.imageUrl} alt={item.title} fill className="object-cover" sizes="96px" />
+                    </button>
+                  )}
+                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400 min-w-0">
+                      <User className="h-3 w-3 shrink-0" />
+                      <span className="font-medium text-gray-600 truncate">@{item.username}</span>
+                    </div>
+                    {item.maxPrice ? (
+                      <div className="flex items-center gap-1 text-xs font-semibold text-emerald-600 min-w-0">
+                        <Tag className="h-3 w-3 shrink-0" />
+                        <span className="truncate">Tối đa {formatCurrency(item.maxPrice)}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">Giá thương lượng</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Footer row */}
+                <div className="mt-auto pt-3 border-t border-gray-100">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                      <MessageCircle className="h-3 w-3" />
+                      {item.contactCount} lượt liên hệ
+                    </span>
+                    <Button
+                      size="sm"
+                      onClick={() => handleContact(item)}
+                      className="bg-carnest-orange hover:bg-carnest-orange-dark text-white shrink-0 gap-1.5"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      Nhắn tin
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
 
           {hasNextPage && (
-            <div className="text-center pt-4">
-              <Button
-                variant="outline"
-                onClick={() => fetchNextPage()}
-                disabled={isFetchingNextPage}
-              >
-                {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-              </Button>
+            <div ref={sentinelRef} className="flex justify-center py-4">
+              {isFetchingNextPage && (
+                <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              )}
             </div>
           )}
+        </div>
+      )}
+
+      {contactItem && (
+        <ContactDialog
+          open
+          onOpenChange={(v) => !v && setContactItem(null)}
+          wantlistId={contactItem.id}
+          receiverId={contactItem.userId}
+          tagTitle={contactItem.title}
+          username={contactItem.username}
+        />
+      )}
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox}
+            alt=""
+            className="max-h-[80vh] max-w-full rounded-xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

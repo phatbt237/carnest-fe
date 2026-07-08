@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Search, Gavel, ShoppingCart, User } from "lucide-react";
+import { Home, Search, Package, ShoppingCart, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/context/auth-context";
 import { useQuery } from "@tanstack/react-query";
@@ -11,7 +11,7 @@ import { cartApi } from "@/lib/api/cart";
 const navItems = [
   { href: "/", icon: Home, label: "Trang chủ" },
   { href: "/products", icon: Search, label: "Tìm kiếm" },
-  { href: "/auctions", icon: Gavel, label: "Đấu giá" },
+  { href: "/orders", icon: Package, label: "Đơn hàng" },
   { href: "/cart", icon: ShoppingCart, label: "Giỏ hàng" },
   { href: "/profile", icon: User, label: "Tôi" },
 ];

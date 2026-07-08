@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Star, MessageSquare } from "lucide-react";
+import { Star, MessageSquare, Loader2 } from "lucide-react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { reviewsApi } from "@/lib/api/reviews";
 import { formatDate } from "@/lib/utils";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 import { ReplyForm } from "./reply-form";
 import { useAuth } from "@/lib/context/auth-context";
 import type { Review } from "@/types";
@@ -217,6 +217,12 @@ export function ReviewList({ shopId, shopOwnerId }: ReviewListProps) {
 
   const reviews = data?.pages.flatMap((p) => p.items) ?? [];
 
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -241,14 +247,10 @@ export function ReviewList({ shopId, shopOwnerId }: ReviewListProps) {
             <ReviewCard key={review.id} review={review} shopOwnerId={shopOwnerId} />
           ))}
           {hasNextPage && (
-            <div className="text-center pt-2">
-              <Button
-                variant="outline"
-                onClick={() => fetchNextPage()}
-                disabled={isFetchingNextPage}
-              >
-                {isFetchingNextPage ? "Đang tải..." : "Xem thêm đánh giá"}
-              </Button>
+            <div ref={sentinelRef} className="flex justify-center py-2">
+              {isFetchingNextPage && (
+                <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              )}
             </div>
           )}
         </>

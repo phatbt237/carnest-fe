@@ -20,7 +20,9 @@ import {
   PlusCircle,
   ExternalLink,
   ImageIcon,
+  Loader2,
 } from "lucide-react";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 import type { TransactionType, WalletTransaction } from "@/types";
 
 const TX_LABELS: Record<TransactionType, string> = {
@@ -218,6 +220,12 @@ export default function WalletPage() {
 
   const transactions = txData?.pages.flatMap((p) => p.items) ?? [];
 
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
+
   const depositMutation = useMutation({
     mutationFn: () => ordersApi.deposit(Number(depositAmount)),
     onSuccess: () => {
@@ -327,15 +335,10 @@ export default function WalletPage() {
           </div>
         )}
         {hasNextPage && (
-          <div className="text-center pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchNextPage()}
-              disabled={isFetchingNextPage}
-            >
-              {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-            </Button>
+          <div ref={sentinelRef} className="flex justify-center py-2">
+            {isFetchingNextPage && (
+              <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+            )}
           </div>
         )}
       </div>

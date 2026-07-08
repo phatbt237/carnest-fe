@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { productsApi } from "@/lib/api/products";
@@ -7,9 +8,12 @@ interface Props {
   params: { slug: string };
 }
 
+// cache() deduplicates the API call — generateMetadata and the page share one request
+const getProduct = cache(productsApi.getBySlug);
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
-    const product = await productsApi.getBySlug(params.slug);
+    const product = await getProduct(params.slug);
     return {
       title: product.metaTitle || `${product.name} | CarNest`,
       description:
@@ -35,7 +39,7 @@ export const revalidate = 60;
 
 export default async function ProductDetailPage({ params }: Props) {
   try {
-    const product = await productsApi.getBySlug(params.slug);
+    const product = await getProduct(params.slug);
 
     // JSON-LD structured data
     const jsonLd = {
@@ -60,8 +64,24 @@ export default async function ProductDetailPage({ params }: Props) {
       },
     };
 
+    // Lấy tất cả URL ảnh, ưu tiên images[] (detail response)
+    const galleryUrls: string[] = (
+      product.images?.map((img) => img.imageUrl) ??
+      (product.imageUrls ?? [])
+    ).filter(Boolean) as string[];
+
+    // Cloudinary transform giống cdn.main trong gallery
+    const preloadUrl = (url: string) =>
+      url.includes("res.cloudinary.com")
+        ? url.replace("/upload/", "/upload/w_900,q_auto,f_auto/")
+        : url;
+
     return (
       <>
+        {/* Preload tất cả ảnh gallery — browser fetch ngay khi nhận HTML */}
+        {galleryUrls.map((url) => (
+          <link key={url} rel="preload" as="image" href={preloadUrl(url)} />
+        ))}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

@@ -1,26 +1,35 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Send, MessageCircle, ArrowLeft } from "lucide-react";
+import { Send, MessageCircle, ArrowLeft, ImagePlus, Tag, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ReportModal } from "@/components/report/report-modal";
 import { chatApi } from "@/lib/api/chat";
+import { uploadApi } from "@/lib/api/upload";
+import { ordersApi } from "@/lib/api/orders";
+import { productsApi } from "@/lib/api/products";
 import { useAuth } from "@/lib/context/auth-context";
 import { useWebSocket } from "@/lib/context/websocket-context";
-import { formatDateTime, getErrorMessage } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDateTime, getErrorMessage } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import type { ChatMessageEvent, Conversation, CursorPage, Message } from "@/types";
+import type { ChatMessageEvent, ChatTagType, Conversation, CursorPage, Message } from "@/types";
 
 // ─── localStorage helpers ──────────────────────────────────────────────────
 const LS_KEY = "carnest_chat_receivers";
@@ -71,27 +80,124 @@ function ConversationItem({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-gray-900 truncate">
+        <div className="flex items-center justify-between gap-2">
+          <p
+            className={cn(
+              "text-sm truncate",
+              conv.unread > 0 ? "font-bold text-gray-900" : "font-semibold text-gray-900"
+            )}
+          >
             {conv.otherUsername}
           </p>
           {conv.unread > 0 && (
-            <span className="h-4.5 w-4.5 rounded-full bg-carnest-blue text-white text-[9px] font-bold flex items-center justify-center ml-1 shrink-0">
-              {conv.unread}
+            <span className="h-5 min-w-5 px-1 rounded-full bg-carnest-blue text-white text-[10px] font-bold leading-none flex items-center justify-center shrink-0">
+              {conv.unread > 99 ? "99+" : conv.unread}
             </span>
           )}
         </div>
         {conv.lastMessage && (
-          <p className="text-xs text-gray-400 truncate mt-0.5">{conv.lastMessage}</p>
+          <p
+            className={cn(
+              "text-xs truncate mt-0.5",
+              conv.unread > 0 ? "font-bold text-gray-900" : "text-gray-400"
+            )}
+          >
+            {conv.lastMessage}
+          </p>
         )}
       </div>
     </button>
   );
 }
 
-function MessageBubble({ msg, isMine }: { msg: Message; isMine: boolean }) {
+const TAG_LABELS: Record<ChatTagType, string> = {
+  PRODUCT: "Sản phẩm",
+  ORDER: "Đơn hàng",
+  WANT_LIST: "Yêu cầu tìm kiếm",
+};
+
+const GROUP_GAP_MS = 2 * 60 * 1000;
+
+function getGroupFlags(messages: Message[], index: number) {
+  const cur = messages[index];
+  const prev = messages[index - 1];
+  const next = messages[index + 1];
+
+  const connectedToPrev =
+    !!prev &&
+    prev.senderUsername === cur.senderUsername &&
+    Math.abs(new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime()) < GROUP_GAP_MS;
+
+  const connectedToNext =
+    !!next &&
+    next.senderUsername === cur.senderUsername &&
+    Math.abs(new Date(next.createdAt).getTime() - new Date(cur.createdAt).getTime()) < GROUP_GAP_MS;
+
+  return { isFirst: !connectedToPrev, isLast: !connectedToNext };
+}
+
+function MessageBubble({
+  msg,
+  isMine,
+  isFirst,
+  isLast,
+  isLastMessage,
+  onImageLoad,
+}: {
+  msg: Message;
+  isMine: boolean;
+  isFirst: boolean;
+  isLast: boolean;
+  isLastMessage?: boolean;
+  onImageLoad?: () => void;
+}) {
+  const router = useRouter();
+  const [resolvingTag, setResolvingTag] = useState(false);
+  const isImage = msg.type === "IMAGE";
+  const tagClickable = msg.tagType === "PRODUCT" || msg.tagType === "ORDER";
+
+  const handleTagClick = async () => {
+    if (!msg.tagType || !msg.tagId || resolvingTag) return;
+    if (msg.tagType === "ORDER") {
+      router.push(`/orders/${msg.tagId}`);
+      return;
+    }
+    if (msg.tagType === "PRODUCT") {
+      setResolvingTag(true);
+      try {
+        const product = await productsApi.getById(msg.tagId);
+        router.push(`/products/${product.slug}`);
+      } catch (err) {
+        toast.error(getErrorMessage(err));
+      } finally {
+        setResolvingTag(false);
+      }
+    }
+  };
+  const bubbleClass = isMine
+    ? cn(
+        "bg-carnest-blue text-white",
+        isFirst && isLast  && "rounded-2xl rounded-br-sm",
+        isFirst && !isLast && "rounded-2xl",
+        !isFirst && !isLast && "rounded-l-2xl rounded-r-sm",
+        !isFirst && isLast  && "rounded-l-2xl rounded-tr-sm rounded-br-sm",
+      )
+    : cn(
+        "bg-gray-100 text-gray-900",
+        isFirst && isLast  && "rounded-2xl rounded-bl-sm",
+        isFirst && !isLast && "rounded-2xl",
+        !isFirst && !isLast && "rounded-r-2xl rounded-l-sm",
+        !isFirst && isLast  && "rounded-r-2xl rounded-tl-sm rounded-bl-sm",
+      );
+
   return (
-    <div className={cn("group flex items-end gap-1", isMine ? "justify-end" : "justify-start")}>
+    <div
+      className={cn(
+        "group flex items-end gap-1",
+        isMine ? "justify-end" : "justify-start",
+        isFirst ? "mt-3" : "mt-0.5"
+      )}
+    >
       {!isMine && (
         <div className="opacity-0 group-hover:opacity-100 transition-opacity mb-1 shrink-0">
           <ReportModal
@@ -108,18 +214,55 @@ function MessageBubble({ msg, isMine }: { msg: Message; isMine: boolean }) {
           />
         </div>
       )}
-      <div
-        className={cn(
-          "max-w-[70%] rounded-2xl px-4 py-2.5 text-sm",
-          isMine
-            ? "bg-carnest-blue text-white rounded-br-sm"
-            : "bg-gray-100 text-gray-900 rounded-bl-sm"
+      <div className={cn("max-w-[70%] overflow-hidden", isImage ? "" : "px-4 py-2 text-sm", bubbleClass)}>
+        {msg.tagType && (
+          <span
+            role={tagClickable ? "button" : undefined}
+            onClick={tagClickable ? handleTagClick : undefined}
+            className={cn(
+              "inline-flex items-center gap-1 mb-1 px-2 py-0.5 rounded-full text-[10px] font-medium",
+              isImage && "mx-3 mt-2",
+              isMine ? "bg-white/15 text-blue-50" : "bg-black/5 text-gray-600",
+              tagClickable && "cursor-pointer hover:underline",
+              resolvingTag && "opacity-60"
+            )}
+          >
+            <Tag className="h-2.5 w-2.5" />
+            {msg.tagTitle ? `${TAG_LABELS[msg.tagType]}: ${msg.tagTitle}` : TAG_LABELS[msg.tagType]}
+          </span>
         )}
-      >
-        <p className="leading-relaxed">{msg.content}</p>
-        <p className={cn("text-[10px] mt-1", isMine ? "text-blue-200" : "text-gray-400")}>
-          {formatDateTime(msg.createdAt)}
-        </p>
+        {isImage ? (
+          <>
+            <div className={cn("grid gap-0.5", (msg.imageUrls?.length ?? 1) > 1 ? "grid-cols-2" : "grid-cols-1")}>
+              {(msg.imageUrls?.length ? msg.imageUrls : [msg.content]).map((url, i) => (
+                <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                  <Image
+                    src={url}
+                    alt="Hình ảnh"
+                    width={240}
+                    height={240}
+                    className="block w-full h-auto object-cover"
+                    onLoad={() => isLastMessage && onImageLoad?.()}
+                  />
+                </a>
+              ))}
+            </div>
+            {isLast && (
+              <p className={cn("text-[10px] px-3 pb-1.5 mt-0.5", isMine ? "text-blue-200" : "text-gray-400")}>
+                {formatDateTime(msg.createdAt)}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="leading-relaxed">{msg.content}</p>
+            {isLast && (
+              <p className={cn("text-[10px] mt-1", isMine ? "text-blue-200" : "text-gray-400")}>
+                {formatDateTime(msg.createdAt)}
+              </p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -143,11 +286,31 @@ function ChatPageContent() {
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "messages">("list");
-  // convReceiverMap is seeded from localStorage so it survives navigation
   const [convReceiverMap, setConvReceiverMap] = useState<Record<number, number>>(loadReceiverMap);
+  // Pending = receiver set from URL but no conversation created yet
+  const [pendingReceiverId, setPendingReceiverId] = useState<number | null>(null);
+  const [pendingUsername, setPendingUsername] = useState<string>("");
+  // Tag attached to the next message sent — either manually picked from the compose bar
+  // (e.g. "Đơn hàng" picker) or carried over from a "Liên hệ" link's tagType/tagId/tagLabel.
+  // Applies whether the conversation is brand-new or already existed.
+  const [manualTag, setManualTag] = useState<{ tagType: ChatTagType; tagId: number; label: string } | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [pendingImages, setPendingImages] = useState<{ file: File; preview: string }[]>([]);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const prevScrollHeightRef = useRef<number>(0);
+
+  // Revoke object URLs on cleanup
+  useEffect(() => {
+    return () => {
+      pendingImages.forEach((img) => URL.revokeObjectURL(img.preview));
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Helper: update both state and localStorage together
   const addReceiver = useCallback((convId: number, receiverId: number) => {
@@ -168,13 +331,21 @@ function ChatPageContent() {
     enabled: isAuthenticated,
   });
 
-  const conversations = convsQuery.data?.pages.flatMap((p) => p.items) ?? [];
+  const conversations = useMemo(
+    () => convsQuery.data?.pages.flatMap((p) => p.items) ?? [],
+    [convsQuery.data]
+  );
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
-  // When conversations load, sync any otherId values we have into the map
+  // The person the next message would go to, whether the conversation is pending or active
+  const currentReceiverId = activeConvId
+    ? convReceiverMap[activeConvId] ?? activeConv?.otherId
+    : pendingReceiverId ?? undefined;
+
+  // When conversations load, always sync otherId into the map (overwrites stale localStorage)
   useEffect(() => {
     conversations.forEach((conv) => {
-      if (conv.otherId && !convReceiverMap[conv.id]) {
+      if (conv.otherId) {
         addReceiver(conv.id, conv.otherId);
       }
     });
@@ -197,16 +368,32 @@ function ChatPageContent() {
       .reverse()
       .flatMap((p) => p.items.slice().reverse()) ?? [];
 
-  // Auto-scroll on new messages
+  // Set scrollTop directly (rather than scrollIntoView) so it lands exactly at the
+  // bottom — used both on new messages and once a lazy-loaded image resizes the last bubble.
+  const scrollToBottom = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, []);
+
+  // Auto-scroll on new messages (only when NOT loading older pages)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (prevScrollHeightRef.current) return; // loading older — don't scroll to bottom
+    scrollToBottom();
+  }, [messages.length, activeConvId, scrollToBottom]);
+
+  // Restore scroll position after older messages are prepended
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !prevScrollHeightRef.current) return;
+    container.scrollTop = container.scrollHeight - prevScrollHeightRef.current;
+    prevScrollHeightRef.current = 0;
   }, [messages.length]);
 
   // Mark as read when conversation opens
   useEffect(() => {
     if (activeConvId) {
       chatApi.markRead(activeConvId).catch(() => {});
-      queryClient.setQueryData<typeof convsQuery.data>(["conversations"], (old) =>
+      queryClient.setQueryData<InfiniteData<CursorPage<Conversation>>>(["conversations"], (old) =>
         old
           ? {
               ...old,
@@ -221,6 +408,28 @@ function ChatPageContent() {
       );
     }
   }, [activeConvId, queryClient]);
+
+  // ── Orders with the current receiver, for the "Đơn hàng" tag picker ───
+  const myOrdersQuery = useQuery({
+    queryKey: ["chat-tag-orders", "buyer"],
+    queryFn: () => ordersApi.myOrders({ size: 50 }),
+    enabled: orderPickerOpen,
+  });
+  const shopOrdersQuery = useQuery({
+    queryKey: ["chat-tag-orders", "seller"],
+    queryFn: () => ordersApi.shopOrders({ size: 50 }),
+    enabled: orderPickerOpen && !!user?.isSeller,
+  });
+  const taggableOrders = useMemo(() => {
+    if (!currentReceiverId) return [];
+    const all = [
+      ...(myOrdersQuery.data?.items ?? []),
+      ...(shopOrdersQuery.data?.items ?? []),
+    ];
+    return all.filter(
+      (o) => o.buyer.id === currentReceiverId || o.shop.owner?.id === currentReceiverId
+    );
+  }, [myOrdersQuery.data, shopOrdersQuery.data, currentReceiverId]);
 
   // ── WebSocket handler ─────────────────────────────────────────────────
   const handleChatMessage = useCallback(
@@ -240,8 +449,21 @@ function ChatPageContent() {
 
   // ── Send mutation ─────────────────────────────────────────────────────
   const sendMutation = useMutation({
-    mutationFn: (params: { receiverId: number; message: string }) =>
-      chatApi.send(params.receiverId, params.message),
+    mutationFn: (params: {
+      receiverId: number;
+      message: string;
+      type?: string;
+      imageUrls?: string[];
+      tagType?: ChatTagType;
+      tagId?: number;
+      tagTitle?: string;
+    }) =>
+      chatApi.send(params.receiverId, params.message, params.type, {
+        imageUrls: params.imageUrls,
+        tagType: params.tagType,
+        tagId: params.tagId,
+        tagTitle: params.tagTitle,
+      }),
     onSuccess: (data, variables) => {
       const convId = data.conversationId;
 
@@ -253,9 +475,13 @@ function ChatPageContent() {
         id: data.messageId,
         senderUsername: data.senderUsername,
         content: data.content,
-        type: "TEXT",
+        type: data.type ?? variables.type ?? "TEXT",
         isRead: true,
         createdAt: data.timestamp,
+        imageUrls: data.imageUrls ?? variables.imageUrls,
+        tagType: data.tagType ?? variables.tagType,
+        tagId: data.tagId ?? variables.tagId,
+        tagTitle: data.tagTitle ?? variables.tagTitle,
       };
 
       // Optimistically insert the message into the cache.
@@ -283,7 +509,7 @@ function ChatPageContent() {
       );
 
       // Update conversations sidebar (last message preview)
-      queryClient.setQueryData<typeof convsQuery.data>(["conversations"], (old) =>
+      queryClient.setQueryData<InfiniteData<CursorPage<Conversation>>>(["conversations"], (old) =>
         old
           ? {
               ...old,
@@ -301,43 +527,122 @@ function ChatPageContent() {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
 
       setActiveConvId(convId);
+      setPendingReceiverId(null);
+      setPendingUsername("");
+      setManualTag(null);
       setInputValue("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
       inputRef.current?.focus();
     },
     onError: (err) => toast.error(getErrorMessage(err)),
   });
 
-  // ── Handle send button / Enter ────────────────────────────────────────
-  const handleSend = () => {
-    const text = inputValue.trim();
-    if (!text || !activeConvId || sendMutation.isPending) return;
-
-    const receiverId = convReceiverMap[activeConvId];
-    if (!receiverId) {
-      // Should rarely happen — show a helpful hint
-      toast.error("Không thể gửi: hãy mở lại cuộc trò chuyện từ trang sản phẩm");
-      return;
-    }
-    sendMutation.mutate({ receiverId, message: text });
+  // ── Image picker ──────────────────────────────────────────────────────
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setPendingImages((prev) => [
+      ...prev,
+      ...files.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+    ]);
+    e.target.value = "";
   };
 
-  // ── Open chat from URL params ─────────────────────────────────────────
+  const removePendingImage = (index: number) => {
+    setPendingImages((prev) => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  // ── Handle send button / Enter ────────────────────────────────────────
+  const handleSend = async () => {
+    if (sendMutation.isPending || isUploadingImage) return;
+
+    // Resolve receiver
+    let receiverId: number | undefined;
+    if (pendingReceiverId && !activeConvId) {
+      receiverId = pendingReceiverId;
+    } else if (activeConvId) {
+      receiverId = convReceiverMap[activeConvId] ?? activeConv?.otherId;
+    }
+    if (!receiverId) return;
+    if (user && receiverId === user.id) {
+      toast.error("Không thể nhắn tin cho chính mình");
+      return;
+    }
+
+    const tag = manualTag;
+
+    // Image send
+    if (pendingImages.length > 0) {
+      setIsUploadingImage(true);
+      try {
+        const imageUrls = await uploadApi.uploadImages(pendingImages.map((p) => p.file), "chat");
+        pendingImages.forEach((p) => URL.revokeObjectURL(p.preview));
+        setPendingImages([]);
+        sendMutation.mutate({
+          receiverId,
+          message: inputValue.trim() || imageUrls[0],
+          type: "IMAGE",
+          imageUrls,
+          tagType: tag?.tagType,
+          tagId: tag?.tagId,
+          tagTitle: tag?.label,
+        });
+      } catch (err) {
+        toast.error(getErrorMessage(err));
+      } finally {
+        setIsUploadingImage(false);
+      }
+      return;
+    }
+
+    // Text send
+    const text = inputValue.trim();
+    if (!text) return;
+    sendMutation.mutate({ receiverId, message: text, tagType: tag?.tagType, tagId: tag?.tagId, tagTitle: tag?.label });
+  };
+
+  // ── Scroll to top → auto-load older messages ─────────────────────────
+  const handleMessagesScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (container.scrollTop < 80 && msgsQuery.hasNextPage && !msgsQuery.isFetchingNextPage) {
+      prevScrollHeightRef.current = container.scrollHeight;
+      msgsQuery.fetchNextPage();
+    }
+  }, [msgsQuery]);
+
+  // ── Read receiverId (+ optional tagType/tagId) from URL — set pending, don't auto-send ──
   useEffect(() => {
     const receiverIdParam = searchParams.get("receiverId");
-    const initialMsg = searchParams.get("message") || "Xin chào!";
-    if (receiverIdParam && isAuthenticated) {
-      const receiverId = Number(receiverIdParam);
-      chatApi
-        .send(receiverId, initialMsg)
-        .then((data) => {
-          addReceiver(data.conversationId, receiverId);
-          queryClient.invalidateQueries({ queryKey: ["conversations"] });
-          setActiveConvId(data.conversationId);
-          setMobileView("messages");
-        })
-        .catch(() => {});
+    if (!receiverIdParam || !isAuthenticated || !user) return;
+    const receiverId = Number(receiverIdParam);
+    if (!receiverId || receiverId === user.id) return;
+    setPendingReceiverId(receiverId);
+    setPendingUsername(searchParams.get("username") ?? "");
+    setMobileView("messages");
+
+    const tagType = searchParams.get("tagType");
+    const tagIdParam = searchParams.get("tagId");
+    if ((tagType === "PRODUCT" || tagType === "ORDER" || tagType === "WANT_LIST") && tagIdParam) {
+      const label = searchParams.get("tagLabel") || TAG_LABELS[tagType];
+      setManualTag({ tagType, tagId: Number(tagIdParam), label });
     }
-  }, [searchParams, isAuthenticated, queryClient, addReceiver]);
+  }, [searchParams, isAuthenticated, user]);
+
+  // ── When conversations load, resolve pending to existing conv ─────────
+  useEffect(() => {
+    if (!pendingReceiverId || conversations.length === 0) return;
+    const existing = conversations.find((c) => c.otherId === pendingReceiverId);
+    if (existing) {
+      setActiveConvId(existing.id);
+      if (existing.otherId) addReceiver(existing.id, existing.otherId);
+      setPendingReceiverId(null);
+      setPendingUsername("");
+    }
+  }, [conversations, pendingReceiverId, addReceiver]);
 
   // ── Not authenticated ─────────────────────────────────────────────────
   if (!isAuthenticated) {
@@ -385,12 +690,21 @@ function ChatPageContent() {
                   key={conv.id}
                   conv={conv}
                   active={conv.id === activeConvId}
-                  onClick={() => {
+                  onClick={async () => {
                     setActiveConvId(conv.id);
                     setMobileView("messages");
-                    // If backend returns otherId, persist it
+                    setPendingReceiverId(null);
+                    setPendingUsername("");
+                    setManualTag(null);
+
                     if (conv.otherId) {
                       addReceiver(conv.id, conv.otherId);
+                    } else if (!convReceiverMap[conv.id]) {
+                      // otherId missing — fetch conversation detail to get it
+                      try {
+                        const detail = await chatApi.getConversation(conv.id);
+                        if (detail.otherId) addReceiver(conv.id, detail.otherId);
+                      } catch {}
                     }
                   }}
                 />
@@ -406,15 +720,18 @@ function ChatPageContent() {
             mobileView === "list" ? "hidden md:flex" : "flex"
           )}
         >
-          {activeConvId && activeConv ? (
+          {(activeConvId && activeConv) || pendingReceiverId ? (
             <>
               {/* Header */}
               <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
-                <button onClick={() => setMobileView("list")} className="md:hidden p-1 -ml-1">
+                <button
+                  onClick={() => { setMobileView("list"); setPendingReceiverId(null); setPendingUsername(""); }}
+                  className="md:hidden p-1 -ml-1"
+                >
                   <ArrowLeft className="h-5 w-5 text-gray-500" />
                 </button>
                 <div className="h-9 w-9 rounded-full bg-carnest-blue/10 flex items-center justify-center text-carnest-blue font-semibold overflow-hidden">
-                  {activeConv.otherAvatar ? (
+                  {activeConv?.otherAvatar ? (
                     <Image
                       src={activeConv.otherAvatar}
                       alt={activeConv.otherUsername}
@@ -423,57 +740,147 @@ function ChatPageContent() {
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    activeConv.otherUsername.charAt(0).toUpperCase()
+                    (activeConv?.otherUsername ?? pendingUsername).charAt(0).toUpperCase() || "?"
                   )}
                 </div>
-                <span className="font-semibold text-gray-900">{activeConv.otherUsername}</span>
+                <span className="font-semibold text-gray-900">
+                  {activeConv?.otherUsername ?? (pendingUsername || "Tin nhắn mới")}
+                </span>
               </div>
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-                {msgsQuery.hasNextPage && (
-                  <div className="text-center">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => msgsQuery.fetchNextPage()}
-                      disabled={msgsQuery.isFetchingNextPage}
-                      className="text-xs text-gray-400"
-                    >
-                      {msgsQuery.isFetchingNextPage ? "Đang tải..." : "Tải tin cũ hơn"}
-                    </Button>
-                  </div>
+              <div
+                ref={scrollContainerRef}
+                onScroll={handleMessagesScroll}
+                className="flex-1 overflow-y-auto px-4 py-4 scrollbar-hide"
+              >
+                {msgsQuery.isFetchingNextPage && (
+                  <p className="text-center text-xs text-gray-400 mb-2">Đang tải...</p>
                 )}
-                {messages.map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    msg={msg}
-                    isMine={msg.senderUsername === user?.username}
-                  />
-                ))}
-                <div ref={messagesEndRef} />
+                {!activeConvId && pendingReceiverId && (
+                  <p className="text-center text-xs text-gray-400 mt-8">Bắt đầu cuộc trò chuyện</p>
+                )}
+                {messages.map((msg, i) => {
+                  const { isFirst, isLast } = getGroupFlags(messages, i);
+                  return (
+                    <MessageBubble
+                      key={msg.id}
+                      msg={msg}
+                      isMine={msg.senderUsername === user?.username}
+                      isFirst={isFirst}
+                      isLast={isLast}
+                      isLastMessage={i === messages.length - 1}
+                      onImageLoad={scrollToBottom}
+                    />
+                  );
+                })}
               </div>
 
               {/* Input */}
-              <div className="px-4 py-3 border-t border-gray-100">
-                <div className="flex gap-2">
-                  <Input
+              <div className="border-t border-gray-100">
+                {/* Selected tag preview */}
+                {manualTag && (
+                  <div className="px-4 pt-2 pb-1 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-carnest-blue/10 text-carnest-blue text-xs font-medium">
+                      <Tag className="h-3 w-3" />
+                      {manualTag.label}
+                      <button
+                        onClick={() => setManualTag(null)}
+                        className="p-0.5 rounded-full hover:bg-carnest-blue/20"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  </div>
+                )}
+                {/* Image preview */}
+                {pendingImages.length > 0 && (
+                  <div className="px-4 pt-2 pb-1 flex items-center gap-2 flex-wrap">
+                    {pendingImages.map((img, i) => (
+                      <div key={img.preview} className="relative h-16 w-16 rounded-lg overflow-hidden border shrink-0">
+                        <Image src={img.preview} alt="Preview" fill className="object-cover" sizes="64px" />
+                        <button
+                          onClick={() => removePendingImage(i)}
+                          className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-black/50 text-white"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {isUploadingImage && (
+                      <span className="text-xs text-gray-400 flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Đang gửi...
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="px-4 py-3 flex gap-2 items-end">
+                  {/* Hidden file input */}
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleImageSelect}
+                  />
+                  {/* Image picker button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0 text-gray-500 hover:text-carnest-blue hover:border-carnest-blue"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={isUploadingImage || sendMutation.isPending}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                  </Button>
+                  {/* Order tag picker button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={cn(
+                      "shrink-0 text-gray-500 hover:text-carnest-blue hover:border-carnest-blue",
+                      manualTag && "text-carnest-blue border-carnest-blue"
+                    )}
+                    onClick={() => {
+                      if (!currentReceiverId) return;
+                      setOrderPickerOpen(true);
+                    }}
+                    disabled={!currentReceiverId || isUploadingImage || sendMutation.isPending}
+                    title="Gắn tag đơn hàng"
+                  >
+                    <Tag className="h-4 w-4" />
+                  </Button>
+                  <textarea
                     ref={inputRef}
                     value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
+                    onChange={(e) => {
+                      setInputValue(e.target.value);
+                      const el = e.target;
+                      el.style.height = "auto";
+                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+                    }}
                     onKeyDown={(e) =>
                       e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSend())
                     }
-                    placeholder="Nhập tin nhắn..."
-                    className="flex-1"
+                    placeholder={pendingImages.length > 0 ? "Thêm chú thích... (tuỳ chọn)" : "Nhập tin nhắn..."}
+                    rows={1}
+                    className="flex-1 h-9 max-h-[120px] resize-none overflow-y-auto scrollbar-hide rounded-md border border-input bg-transparent px-3 py-1.5 text-sm leading-normal shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isUploadingImage}
                   />
                   <Button
                     onClick={handleSend}
-                    disabled={!inputValue.trim() || sendMutation.isPending}
+                    disabled={(!inputValue.trim() && pendingImages.length === 0) || sendMutation.isPending || isUploadingImage}
                     className="bg-carnest-blue hover:bg-carnest-blue-dark text-white shrink-0"
                     size="icon"
                   >
-                    <Send className="h-4 w-4" />
+                    {isUploadingImage ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
               </div>
@@ -486,6 +893,43 @@ function ChatPageContent() {
           )}
         </div>
       </div>
+
+      {/* Order tag picker */}
+      <Dialog open={orderPickerOpen} onOpenChange={setOrderPickerOpen}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 text-lg">Gắn tag đơn hàng</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-80 overflow-y-auto -mx-1 px-1 space-y-1.5">
+            {myOrdersQuery.isLoading || shopOrdersQuery.isLoading ? (
+              <p className="text-center text-sm text-gray-400 py-6">Đang tải...</p>
+            ) : taggableOrders.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-6">
+                Không có đơn hàng nào chung với người này
+              </p>
+            ) : (
+              taggableOrders.map((order) => (
+                <button
+                  key={order.id}
+                  onClick={() => {
+                    setManualTag({ tagType: "ORDER", tagId: order.id, label: `Đơn ${order.orderCode}` });
+                    setOrderPickerOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-gray-100 hover:border-carnest-blue hover:bg-carnest-blue/5 text-left transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{order.orderCode}</p>
+                    <p className="text-xs text-gray-400">{formatDate(order.createdAt)}</p>
+                  </div>
+                  <span className="text-sm font-semibold text-carnest-blue shrink-0">
+                    {formatCurrency(order.totalAmount)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

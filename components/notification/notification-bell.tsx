@@ -103,7 +103,7 @@ export function NotificationBell() {
             </div>
 
             {/* List */}
-            <div className="max-h-[360px] overflow-y-auto">
+            <div className="max-h-[360px] overflow-y-auto scrollbar-hide">
               {isLoading ? (
                 <div className="p-3 space-y-3">
                   {[1, 2, 3].map((i) => (

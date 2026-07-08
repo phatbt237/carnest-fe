@@ -1,13 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Loader2 } from "lucide-react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { notificationsApi } from "@/lib/api/notifications";
 import { useNotificationStore } from "@/lib/stores/notification-store";
+import { useInfiniteScroll } from "@/lib/hooks/use-infinite-scroll";
 import { useAuth } from "@/lib/context/auth-context";
 import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,12 @@ export default function NotificationsPage() {
     });
 
   const notifications = data?.pages.flatMap((p) => p.items) ?? [];
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore: !!hasNextPage,
+    isLoading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  });
 
   const markAllMutation = useMutation({
     mutationFn: notificationsApi.markAllRead,
@@ -130,15 +137,10 @@ export default function NotificationsPage() {
               </button>
             ))}
             {hasNextPage && (
-              <div className="p-4 border-t border-gray-100 text-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchNextPage()}
-                  disabled={isFetchingNextPage}
-                >
-                  {isFetchingNextPage ? "Đang tải..." : "Xem thêm"}
-                </Button>
+              <div ref={sentinelRef} className="flex justify-center py-4 border-t border-gray-100">
+                {isFetchingNextPage && (
+                  <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                )}
               </div>
             )}
           </>

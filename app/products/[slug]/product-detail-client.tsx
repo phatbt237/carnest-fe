@@ -21,6 +21,8 @@ import {
   Users,
   UserPlus,
   UserMinus,
+  Share2,
+  CheckCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,14 +30,22 @@ import { Separator } from "@/components/ui/separator";
 import { ProductGallery } from "@/components/product/product-gallery";
 import { OfferDialog } from "@/components/product/offer-dialog";
 import { TradeDialog } from "@/components/product/trade-dialog";
+import { ContactDialog } from "@/components/chat/contact-dialog";
 import { ReportModal } from "@/components/report/report-modal";
-import { formatCurrency, getDiscountPercent, getErrorMessage } from "@/lib/utils";
+import { formatCurrency, getDiscountPercent, getErrorMessage, formatCompact } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { cartApi } from "@/lib/api/cart";
 import { shopsApi } from "@/lib/api/shops";
 import { useAuth } from "@/lib/context/auth-context";
 import type { Product } from "@/types";
 import { CONDITION_LABELS } from "@/types";
+
+function getProductImages(product: Product): string[] {
+  if (product.images?.length) return product.images.map((img) => img.imageUrl).filter(Boolean);
+  if (product.imageUrls?.length) return product.imageUrls.filter(Boolean) as string[];
+  if (product.primaryImage) return [product.primaryImage];
+  return [];
+}
 
 interface Props {
   product: Product;
@@ -47,6 +57,19 @@ export function ProductDetailClient({ product }: Props) {
   const [quantity, setQuantity] = useState(1);
   const [offerOpen, setOfferOpen] = useState(false);
   const [tradeOpen, setTradeOpen] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      await navigator.share({ title: product.name, url }).catch(() => {});
+    } else {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const isOwnProduct = user?.id === product.shop?.owner?.id;
 
@@ -118,7 +141,7 @@ export function ProductDetailClient({ product }: Props) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
         {/* Gallery */}
-        <ProductGallery images={product.imageUrls} name={product.name} />
+        <ProductGallery images={getProductImages(product)} name={product.name} />
 
         {/* Product Info */}
         <div className="space-y-4">
@@ -147,15 +170,46 @@ export function ProductDetailClient({ product }: Props) {
             )}
           </div>
 
-          <h1 className="text-2xl font-bold text-gray-900 leading-tight">
-            {product.name}
-          </h1>
+          <div className="flex items-start gap-2">
+            <h1 className="text-2xl font-bold text-gray-900 leading-tight flex-1">
+              {product.name}
+            </h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleShare}
+              className="shrink-0 text-gray-400 hover:text-gray-600 h-8 w-8"
+              title={copied ? "Đã sao chép link!" : "Chia sẻ"}
+            >
+              {copied ? <CheckCheck className="h-4 w-4 text-green-500" /> : <Share2 className="h-4 w-4" />}
+            </Button>
+          </div>
 
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Package className="h-4 w-4" />
-            <span>Đã bán: {product.soldCount}</span>
+          <div className="flex items-center gap-3 text-sm text-gray-500 flex-wrap">
+            <span className="flex items-center gap-1">
+              <Package className="h-4 w-4" />
+              Đã bán: {formatCompact(product.soldCount)}
+            </span>
             <span>·</span>
             <span>Còn lại: {product.quantity}</span>
+            {product.ratingAvg != null && (
+              <>
+                <span>·</span>
+                <span className="flex items-center gap-1">
+                  <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                  {product.ratingAvg.toFixed(1)}
+                </span>
+              </>
+            )}
+            {product.followerCount > 0 && (
+              <>
+                <span>·</span>
+                <span className="flex items-center gap-1">
+                  <Users className="h-4 w-4" />
+                  {formatCompact(product.followerCount)} quan tâm
+                </span>
+              </>
+            )}
           </div>
 
           {/* Price */}
@@ -314,7 +368,7 @@ export function ProductDetailClient({ product }: Props) {
                       <p className="font-semibold text-sm text-gray-900 flex items-center gap-1 group-hover:text-carnest-blue transition-colors">
                         <span className="truncate">{product.shop.shopName}</span>
                         {product.shop.isVerified && (
-                          <BadgeCheck className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                          <BadgeCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                         )}
                       </p>
                     </Link>
@@ -325,7 +379,7 @@ export function ProductDetailClient({ product }: Props) {
                       <Star className="h-2.5 w-2.5 text-yellow-400 fill-yellow-400" />
                       <span className="font-medium text-gray-700">{product.shop.rating?.toFixed(1) || "—"}</span>
                       {product.shop.reviewCount > 0 && (
-                        <span className="text-gray-400">({product.shop.reviewCount})</span>
+                        <span className="text-gray-400">({formatCompact(product.shop.reviewCount)})</span>
                       )}
                     </span>
                     <span className="text-gray-300">·</span>
@@ -339,17 +393,23 @@ export function ProductDetailClient({ product }: Props) {
 
               {/* Row: action buttons */}
               <div className="flex gap-2 mt-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  asChild
-                  className="flex-1 gap-1.5 h-8 text-xs bg-white border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white transition-colors"
-                >
-                  <Link href={`/chat?receiverId=${product.shop.owner?.id ?? ""}`}>
+                {!isOwnProduct && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 gap-1.5 h-8 text-xs bg-white border-carnest-blue text-carnest-blue hover:bg-carnest-blue hover:text-white transition-colors"
+                    onClick={() => {
+                      if (!isAuthenticated) {
+                        toast.error("Vui lòng đăng nhập");
+                        return;
+                      }
+                      setContactOpen(true);
+                    }}
+                  >
                     <MessageCircle className="h-3.5 w-3.5" />
                     Nhắn tin
-                  </Link>
-                </Button>
+                  </Button>
+                )}
 
                 {!isOwnProduct && (
                   <Button
@@ -450,6 +510,19 @@ export function ProductDetailClient({ product }: Props) {
         onOpenChange={setTradeOpen}
         targetProduct={product}
       />
+
+      {/* Contact seller dialog */}
+      {product.shop?.owner?.id && (
+        <ContactDialog
+          open={contactOpen}
+          onOpenChange={setContactOpen}
+          receiverId={product.shop.owner.id}
+          tagType="PRODUCT"
+          tagId={product.id}
+          tagTitle={product.name}
+        />
+      )}
     </div>
   );
 }
+
